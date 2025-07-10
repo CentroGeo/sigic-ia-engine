@@ -1,0 +1,32 @@
+services:
+  django:
+    build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on: #Eliminar cuando apunte al DB real
+      - db
+    env_file: .env
+    entrypoint: sh ./scripts/entrypoint.sh
+
+  #Eliminar cuando apunte al db real
+  db:
+      image: postgres:15
+      environment:
+        POSTGRES_DB: ${DB_NAME}
+        POSTGRES_USER: ${DB_USER}
+        POSTGRES_PASSWORD: ${DB_PASSWORD}
+      ports:
+      - "5433:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data/
+      restart: always 
+
+volumes:
+  postgres_data:
+    
+#run comand
+#docker compose up --build
