@@ -2,12 +2,15 @@ from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from rest_framework import status
 from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+
 import threading
 import requests
 
 llm_lock: threading.Lock = threading.Lock()
 
 @api_view(['GET','POST'])
+@csrf_exempt
 def chat(request):
     server = "http://172.17.0.1:11434"
     

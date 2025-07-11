@@ -21,4 +21,4 @@ COPY . .
 
 RUN chmod +x scripts/entrypoint.sh
 
-CMD ["gunicorn", "llm.wsgi:application", "--bind", "0.0.0.0:8000"]
+CMD ["gunicorn", "llm.wsgi:application", "--bind", "0.0.0.0:8001"]

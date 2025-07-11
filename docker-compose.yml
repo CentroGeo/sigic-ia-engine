@@ -6,7 +6,7 @@ services:
     volumes:
       - .:/app
     ports:
-      - "8000:8000"
+      - "8001:8001"
     depends_on: #Eliminar cuando apunte al DB real
       - db
     env_file: .env

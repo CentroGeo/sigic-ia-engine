@@ -2,7 +2,7 @@ from .base import *
 import os
 
 DEBUG = True
-ALLOWED_HOSTS = ["*"]
+ALLOWED_HOSTS = ["*",'172.17.0.1','localhost','llm_backend']  
 
 print("DEBUG: Using settings module:", __name__)
 
