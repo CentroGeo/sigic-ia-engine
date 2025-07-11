@@ -17,5 +17,5 @@ python manage.py migrate
 
 echo "Iniciando el servidor Gunicorn..."
 exec gunicorn llm.wsgi:application \
-  --bind 0.0.0.0:8000 \
+  --bind 0.0.0.0:8000 --timeout 600 --workers=1 --threads=2 \
   --env DJANGO_SETTINGS_MODULE=llm.settings.dev

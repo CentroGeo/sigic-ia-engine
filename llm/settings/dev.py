@@ -4,13 +4,15 @@ import os
 DEBUG = True
 ALLOWED_HOSTS = ["*"]
 
+print("DEBUG: Using settings module:", __name__)
+
 DATABASES = {
     'default': {
         'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ.get('DB_NAME'),
-        'USER': os.environ.get('DB_USER'),
-        'PASSWORD': os.environ.get('DB_PASSWORD'),
-        'HOST': os.environ.get('DB_HOST'),
-        'PORT': os.environ.get('DB_PORT'),
+        'NAME': os.environ.get('DB_NAME', 'llm'),
+        'USER': os.environ.get('DB_USER', 'postgres'),
+        'PASSWORD': os.environ.get('DB_PASSWORD','postgres'),
+        'HOST': os.environ.get('DB_HOST','db'),
+        'PORT': os.environ.get('DB_PORT','5432'),
     }
 }
