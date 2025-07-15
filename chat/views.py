@@ -13,15 +13,18 @@ llm_lock: threading.Lock = threading.Lock()
 @csrf_exempt
 def chat(request):
     server = "http://172.17.0.1:11434"
-    
-    payload = {
-        "model": "deepseek-r1",
-        "messages": [
-            {"role": "system", "content": "You are a helpful assistant."},
-            {"role": "user", "content": "Haz un resumen de una noticia"}
-        ],
-        "think": False,
+    payload = request.data
+    updated_payload = {
+        **payload,
         "stream": False,
+        "format": "json",
+        # "options": { 
+        #     "temperature": 0.1, 
+        #     "seed": 42,        
+        #     "top_p": 0.9,
+        #     "num_ctx": 4096,
+        #     "repeat_penalty": 1.1
+        # }
     }
     
     acquired = llm_lock.acquire(blocking=False)
@@ -32,7 +35,8 @@ def chat(request):
 
     
     try:
-        resp = requests.post(f"{server}/v1/chat/completions", json=payload, timeout=500)
+        #resp = requests.post(f"{server}/v1/chat/completions", json=updated_payload, timeout=500)
+        resp = requests.post(f"{server}/api/chat", json=updated_payload, timeout=500)
         resp.raise_for_status()
         data = resp.json()
         return JsonResponse(data)
