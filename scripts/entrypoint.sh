@@ -12,6 +12,8 @@ done
 
 echo "Base de datos disponible, ejecutando migraciones..."
 
+#python manage.py makemigrations
+python manage.py makemigrations --noinput
 # Ejecutar migraciones
 python manage.py migrate
 
