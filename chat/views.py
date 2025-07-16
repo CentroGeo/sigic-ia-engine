@@ -12,7 +12,7 @@ llm_lock: threading.Lock = threading.Lock()
 @api_view(['GET','POST'])
 @csrf_exempt
 def chat(request):
-    server = "http://172.17.0.1:11434"
+    server = "http://host.docker.internal:11434"
     payload = request.data
     updated_payload = {
         **payload,

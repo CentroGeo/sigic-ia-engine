@@ -11,6 +11,8 @@ services:
       - db
     env_file: .env
     entrypoint: sh ./scripts/entrypoint.sh
+    networks:
+      - red_prueba
 
   #Eliminar cuando apunte al db real
   db:
@@ -23,10 +25,16 @@ services:
       - "5434:5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data/
-      restart: always 
+      restart: always
+      networks:
+        - red_prueba
 
 volumes:
   postgres_data:
+ 
+networks:
+  red_prueba:
+    name: red_prueba
     
 #run comand
 #docker compose up --build
