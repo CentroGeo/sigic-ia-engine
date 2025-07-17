@@ -3,7 +3,7 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
-from fileuploads.models import Workspace, Context
+from fileuploads.models import Workspace, Context, Files
 from django.db import transaction
 from rest_framework import status
 import  json 
@@ -125,7 +125,7 @@ def list_workspaces_contexts(request, workspace_id):
 def list_admin_workspaces_contexts(request, workspace_id):
     user_id = request.GET.get("user_id")
     
-    list_workspaces = list(Context.objects.filter(
+    list_workspaces_contexts = list(Context.objects.filter(
         user_id=user_id,
         workspace_id=workspace_id
     ).values(
@@ -133,7 +133,7 @@ def list_admin_workspaces_contexts(request, workspace_id):
     ))
     
     
-    return JsonResponse(list(list_workspaces), safe=False)
+    return JsonResponse(list(list_workspaces_contexts), safe=False)
 
 @api_view(["GET", "POST"])
 def create_admin_workspaces_contexts(request):
@@ -197,3 +197,38 @@ def create_admin_workspaces_contexts(request):
     except Exception as e:
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
+"""
+    Secciones de apis para files
+"""
+@api_view(["GET", "POST"])
+def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
+    user_id = request.GET.get("user_id")
+    
+    list_files = list(Files.objects.filter(
+        context=context_id
+    ).values(
+        'id', 'document_id', 'document_type', 'user_id'
+    ))
+    
+    return JsonResponse(list(list_files), safe=False)
+
+@api_view(["GET", "POST"])
+def create_admin_workspaces_contexts_files(request):
+    user_id = request.GET.get("user_id")
+
+    file = request.FILES.get('file', None)
+    if file:
+        filename = file.name
+        file_extension = filename.split('.')[-1].lower()
+        
+        if file_extension not in ['']:
+            return JsonResponse(
+                {"error": "El archivo debe ser "},
+                status=400
+            )
+    
+    """
+        Guarado a geonode
+    """
+            
+    return JsonResponse( {"status": "ok"}, safe=False)

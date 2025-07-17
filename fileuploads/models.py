@@ -27,18 +27,9 @@ class Context(models.Model):
     is_delete       = models.BooleanField(default=False)
     image_type      = models.TextField(default='')
 
-class Indexado(models.Model):
-    indexado_id     = models.UUIDField(null=True, blank=True)
+class Files(models.Model):
+    context         = models.ForeignKey(Context, on_delete=models.CASCADE, null=True)
     document_id     = models.UUIDField(null=True, blank=True)
-    type_document   = models.TextField()
+    document_type   = models.TextField()
     user_id         = models.UUIDField(null=True, blank=True)
-    
-    active          = models.BooleanField(default=True)
-    public          = models.BooleanField(default=True)
-    created_date    = models.DateTimeField(auto_now_add=True)
-    is_delete       = models.BooleanField(default=False)
-
-class Indexado_Context(models.Model):
-    context        = models.ForeignKey(Context, on_delete=models.CASCADE, null=True)
-    indexado       = models.ForeignKey(Indexado, on_delete=models.CASCADE, null=True)
 
