@@ -1,7 +1,6 @@
 from django.db import models
 import uuid
 
-
 class Workspace(models.Model):
     title           = models.TextField()
     description     = models.TextField(null=True, blank=True)
@@ -12,7 +11,7 @@ class Workspace(models.Model):
     created_date    = models.DateTimeField(auto_now_add=True)
     
     is_delete       = models.BooleanField(default=False)
-    image_uuid      = models.TextField(default='', blank=True)
+    image_type     = models.TextField(default='', blank=True)
 
 class Context(models.Model):
     workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
@@ -26,7 +25,7 @@ class Context(models.Model):
     created_date    = models.DateTimeField(auto_now_add=True)
     
     is_delete       = models.BooleanField(default=False)
-    type_image      = models.TextField(default='')
+    image_type      = models.TextField(default='')
 
 class Indexado(models.Model):
     indexado_id     = models.UUIDField(null=True, blank=True)

@@ -3,12 +3,16 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
-from fileuploads.models import Workspace
+from fileuploads.models import Workspace, Context
 from django.db import transaction
 from rest_framework import status
 import  json 
+import os
+import shutil
 
-
+"""
+    Secciones de apis para workspaces
+"""
 @api_view(["GET", "POST"])
 def list_workspaces(request):
     user_id = request.GET.get("user_id")
@@ -17,7 +21,7 @@ def list_workspaces(request):
         Q(user_id=user_id) | Q(public=True),
         active=True
     ).values(
-        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'type_image'
+        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
     ))
     
     
@@ -31,16 +35,21 @@ def list_admin_workspaces(request):
     list_workspaces = list(Workspace.objects.filter(
         user_id=user_id,
     ).values(
-        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'type_image'
+        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
     ))
     
     
     return JsonResponse(list(list_workspaces), safe=False)
 
 @api_view(["GET", "POST"])
+@csrf_exempt
 def create_admin_workspaces(request):
     user_id = request.GET.get("user_id")
     workspace_data = request.POST.copy()
+    answer = {
+        "id": None,
+        "saved": False
+    }
     
     file = request.FILES.get('file', None)
     if file:
@@ -48,32 +57,143 @@ def create_admin_workspaces(request):
         file_extension = filename.split('.')[-1].lower()
         
         if file_extension not in ['jpg', 'jpeg', 'png']:
-            return Response({"error": "El archivo debe ser una imagen (jpg, jpeg, png)"}, status=status.HTTP_400_BAD_REQUEST)
-        
-    with transaction.atomic():
-        new_workspace = Workspace()
-        new_workspace.user_id = user_id
-        new_workspace.title = workspace_data.get("title")
-        new_workspace.description = workspace_data.get("description")
-        new_workspace.type_image = file_extension
-        
-        if(file is not None):   
-            new_workspace.type_image = file_extension
+            return JsonResponse(
+                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
+                status=400
+            )
+    
+    try:
+        with transaction.atomic():
             
-        new_workspace.save()
-        
-        
-        """
-            section para subir archivo en geonode si se
-        """
+            new_workspace               = Workspace()
+            new_workspace.user_id       = user_id
+            new_workspace.title         = workspace_data.get("title")
+            new_workspace.description   = workspace_data.get("description")
+            new_workspace.public        = workspace_data.get("public")
+            
+            if file:   
+                new_workspace.image_type = file_extension
+                
+            new_workspace.save()
+            
+            if file:   
+                try:
+                    # Crear el directorio si no existe
+                    upload_dir = "uploaded_images"
+                    if not os.path.exists(upload_dir):
+                        os.makedirs(upload_dir)
 
-        """
-            section para indexar en postgresql
-        """
-        
-        """
-            section para categorizar el archivo tesis, noticias, etc...
-        """
-        
-        
+                    workspaces_dir = os.path.join(upload_dir, "workspaces")
+                    if not os.path.exists(workspaces_dir):
+                        os.makedirs(workspaces_dir)
+                    
+                    # Guardar la imagen en el directorio
+                    file_path = os.path.join(workspaces_dir, '{}.{}'.format(new_workspace.id, file_extension))
+                    with open(file_path, "wb") as f:
+                        shutil.copyfileobj(file.file, f)
+                except:
+                    l = 0
+                    
+            answer["id"] = new_workspace.id
+            answer["saved"] = True
+        return JsonResponse(answer, status=200)
+    except Exception as e:
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
+
+"""
+    Secciones de apis para contexts
+"""
+@api_view(["GET", "POST"])
+def list_workspaces_contexts(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    
+    list_workspaces = list(Context.objects.filter(
+        Q(user_id=user_id) | Q(public=True),
+        active=True,
+        workspace_id=workspace_id
+    ).values(
+        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
+    ))
+    
+    
     return JsonResponse(list(list_workspaces), safe=False)
+
+
+@api_view(["GET", "POST"])
+def list_admin_workspaces_contexts(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    
+    list_workspaces = list(Context.objects.filter(
+        user_id=user_id,
+        workspace_id=workspace_id
+    ).values(
+        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
+    ))
+    
+    
+    return JsonResponse(list(list_workspaces), safe=False)
+
+@api_view(["GET", "POST"])
+def create_admin_workspaces_contexts(request):
+    user_id = request.GET.get("user_id")
+    context_data = request.POST.copy()
+    
+    answer = {
+        "id": None,
+        "saved": False
+    }
+    
+    file = request.FILES.get('file', None)
+    if file:
+        filename = file.name
+        file_extension = filename.split('.')[-1].lower()
+        
+        if file_extension not in ['jpg', 'jpeg', 'png']:
+            return JsonResponse(
+                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
+                status=400
+            )
+    
+    try:
+        with transaction.atomic():
+            getWorkspace = Workspace.objects.get(id=context_data.get("workspace_id"))
+            
+            new_context               = Context()
+            new_context.workspace     = getWorkspace
+            new_context.user_id       = user_id
+            new_context.title         = context_data.get("title")
+            new_context.description   = context_data.get("description")
+            new_context.public        = context_data.get("public")
+            
+            if file:   
+                new_context.image_type = file_extension
+                
+            new_context.save()
+            
+            if file:   
+                try:
+                    # Crear el directorio si no existe
+                    upload_dir = "uploaded_images"
+                    if not os.path.exists(upload_dir):
+                        os.makedirs(upload_dir)
+
+                    contexts_dir = os.path.join(upload_dir, "contexts")
+                    if not os.path.exists(contexts_dir):
+                        os.makedirs(contexts_dir)
+                    
+                    # Guardar la imagen en el directorio
+                    file_path = os.path.join(contexts_dir, '{}.{}'.format(new_context.id, file_extension))
+                    with open(file_path, "wb") as f:
+                        shutil.copyfileobj(file.file, f)
+                except:
+                    l = 0
+                    
+            answer["id"] = new_context.id
+            answer["saved"] = True
+        
+        return JsonResponse(answer, status=200)    
+    except Exception as e:
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
