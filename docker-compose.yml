@@ -1,6 +1,7 @@
 services:
   django:
     build: .
+    container_name: modulo-ia-django
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
@@ -16,6 +17,7 @@ services:
 
   #Eliminar cuando apunte al db real
   db:
+      container_name: modulo-ia-db
       image: postgres:15
       environment:
         POSTGRES_DB: ${DB_NAME}
