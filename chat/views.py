@@ -3,20 +3,20 @@ from rest_framework.response import Response
 from rest_framework import status
 from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
-
+from django.http import StreamingHttpResponse
+import time
 import threading
 import requests
 
 llm_lock: threading.Lock = threading.Lock()
-
-@api_view(['GET','POST'])
+@api_view(['GET','POST'])   
 @csrf_exempt
 def chat(request):
     server = "http://host.docker.internal:11434"
     payload = request.data
     updated_payload = {
         **payload,
-        "stream": False,
+        "stream": True,
         "format": "json",
         # "options": { 
         #     "temperature": 0.1, 
@@ -34,17 +34,17 @@ def chat(request):
         }, status=503)
 
     
-    try:
-        #resp = requests.post(f"{server}/v1/chat/completions", json=updated_payload, timeout=500)
-        resp = requests.post(f"{server}/api/chat", json=updated_payload, timeout=500)
-        resp.raise_for_status()
-        data = resp.json()
-        return JsonResponse(data)
-    except requests.exceptions.Timeout:
-        return JsonResponse({"error": "Timeout contactando Ollama"}, status=504)
-    except requests.exceptions.RequestException as e:
-        return JsonResponse({"error": f"Error en solicitud a Ollama: {str(e)}"}, status=502)
-    except Exception as e:
-        return JsonResponse({"error": f"Error inesperado: {str(e)}"}, status=500)
-    finally:
-        llm_lock.release()
+    def event_stream():
+        try:
+        
+            with requests.post(f"{server}/api/chat", json=updated_payload,  headers={"Content-Type": "application/json"}, timeout=500, stream=True) as resp:
+                resp.raise_for_status()
+                for line in resp.iter_lines(decode_unicode=True):
+                    print(f"[DEBUG] tipo de line: {type(line)} - contenido: {repr(line)}")
+                    yield f"{line}\n"
+                    time.sleep(0.2)
+        finally:
+            llm_lock.release()
+            
+                
+    return StreamingHttpResponse(event_stream(), content_type='text/event-stream')
