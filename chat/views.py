@@ -54,13 +54,22 @@ def chat(request):
 
                 new_messages.append(llm_response)
                 
-                update_history                  = History.objects.get(id=payload['chat_id'])
-                
-                if(update_history.history_array == None):
-                    update_history.history_array = []
+                if payload['type'] == 'Preguntar':
+                    update_history                  = History.objects.get(id=payload['chat_id'])
                     
-                update_history.history_array    = update_history.history_array + new_messages
-                update_history.save()
+                    if(update_history.history_array == None):
+                        update_history.history_array = []
+                        
+                    update_history.history_array    = update_history.history_array + new_messages
+                    update_history.job_status       = "Finalizado"
+                    update_history.save()
+        except Exception as e:
+            print("[DEBUG] error: " + str(e))
+            update_history                  = History.objects.get(id=payload['chat_id'])    
+            update_history.job_status       = "Error"
+            update_history.save()
+            
+            return JsonResponse({"error": str(e)}, status=500)
         finally:
             llm_lock.release()
             
