@@ -3,4 +3,6 @@ from . import views
 
 urlpatterns = [
     path('v1', views.chat, name='chat-api'),
+    path('history/generate', views.historyGenerate, name='history-generate'),
+    path('history/user', views.historyUser, name='history-user'),
 ]
