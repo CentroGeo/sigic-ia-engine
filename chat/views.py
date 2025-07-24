@@ -21,7 +21,7 @@ def chat(request):
     updated_payload = {
         **payload,
         "stream": True,
-        "format": "json",
+        #"format": "json",
         # "options": { 
         #     "temperature": 0.1, 
         #     "seed": 42,        
