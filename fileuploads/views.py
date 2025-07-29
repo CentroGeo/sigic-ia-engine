@@ -9,6 +9,7 @@ from rest_framework import status
 import  json 
 import os
 import shutil
+import requests
 
 """
     Secciones de apis para workspaces
@@ -351,3 +352,38 @@ def create_admin_workspaces_contexts_files(request):
     """
             
     return JsonResponse( {"status": "ok"}, safe=False)
+
+@api_view(["POST"])
+@csrf_exempt
+def upload_to_geonode(request):
+    token = request.headers.get("Authorization")
+    cookie = request.headers.get("Cookie")
+    if not token:
+        return JsonResponse({"error": "Authorization header missing"}, status=400)
+    file = request.FILES.get("file")
+    title = request.POST.get("title", "Sin título")
+    if not file:
+        return JsonResponse({"error": "File not received"}, status=400)
+    try:
+        files = {
+            "doc_file": (file.name, file, file.content_type)
+        }
+        data = {
+            "title": title
+        }
+        headers = {
+            "Authorization": token
+        }
+        if cookie:
+            headers["Cookie"] = cookie
+        response = requests.post(
+            # "https://geonode.dev.geoint.mx/documents/upload?no__redirect=true",
+            "http://10.2.102.99/documents/upload?no__redirect=true",
+            files=files,
+            data=data,
+            headers=headers,
+            timeout=30
+        )
+        return JsonResponse(response.json(), status=response.status_code)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)

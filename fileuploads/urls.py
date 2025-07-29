@@ -2,6 +2,7 @@ from django.urls import path
 from . import views
 
 urlpatterns = [
+    path("upload-to-geonode/", views.upload_to_geonode, name="upload_to_geonode"),
     #apis para usuarios
     path('workspaces/user', views.list_workspaces, name='workspace-list'),
     path('workspaces/user/<int:workspace_id>/contexts', views.list_workspaces_contexts, name='contexts-list'),
