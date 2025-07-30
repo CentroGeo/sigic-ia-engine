@@ -5,7 +5,16 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
 from fileuploads.models import Workspace, Context, Files
 from django.db import transaction
+import pandas as pd
+from docx import Document as DocxDocument
+from pdfminer.high_level import extract_text as extract_pdf_text
+from rest_framework.views import APIView
 from rest_framework import status
+from llama_index.llms.ollama import Ollama
+from llama_index.embeddings.huggingface import HuggingFaceEmbedding
+from llama_index.vector_stores.postgres import PGVectorStore
+from llama_index.core import VectorStoreIndex, StorageContext
+from llama_index.core.schema import Document
 import  json 
 import os
 import shutil
@@ -351,3 +360,74 @@ def create_admin_workspaces_contexts_files(request):
     """
             
     return JsonResponse( {"status": "ok"}, safe=False)
+
+
+class ConsultaDocumentoView(APIView):
+
+    def post(self, request):
+        pregunta = request.data.get("pregunta")
+        if not pregunta:
+            return Response({"error": "Se requiere una pregunta."}, status=400)
+
+        # Configurar LLM y embeddings
+        llm = Ollama(model='llama3')
+        embed_model = HuggingFaceEmbedding(model_name='sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2')
+
+        # Conexión a vector store
+        vector_store = PGVectorStore.from_params(
+            database='tu_db',
+            host='localhost',
+            password='tu_password',
+            port=5432,
+            user='tu_usuario',
+            table_name='documentos_vectorizados'
+        )
+
+        # Recuperar índice
+        storage_context = StorageContext.from_defaults(vector_store=vector_store)
+        index = VectorStoreIndex.from_vector_store(vector_store, storage_context=storage_context, embed_model=embed_model, llm=llm)
+
+        # Ejecutar consulta
+        query_engine = index.as_query_engine()
+        respuesta = query_engine.query(pregunta)
+
+        return Response({"respuesta": str(respuesta)}, status=200)
+
+
+def cargar_documentos_desde_directorio(directorio: str) -> list[Document]:
+    documentos = []
+
+    for archivo in os.listdir(directorio):
+        ruta = os.path.join(directorio, archivo)
+        extension = archivo.lower().split('.')[-1]
+
+        try:
+            if extension == 'pdf':
+                texto = extract_pdf_text(ruta)
+
+            elif extension == 'txt':
+                with open(ruta, 'r', encoding='utf-8') as f:
+                    texto = f.read()
+
+            elif extension == 'csv':
+                df = pd.read_csv(ruta)
+                texto = df.to_string(index=False)
+
+            elif extension in ['xls', 'xlsx']:
+                df = pd.read_excel(ruta)
+                texto = df.to_string(index=False)
+
+            elif extension == 'docx':
+                doc = DocxDocument(ruta)
+                texto = "\n".join([p.text for p in doc.paragraphs])
+
+            else:
+                print(f"Extensión no soportada: {archivo}")
+                continue
+
+            documentos.append(Document(text=texto, metadata={"nombre_archivo": archivo}))
+
+        except Exception as e:
+            print(f"Error procesando {archivo}: {e}")
+
+    return documentos
