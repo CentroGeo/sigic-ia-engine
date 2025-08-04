@@ -18,7 +18,7 @@ services:
   #Eliminar cuando apunte al db real
   db:
       container_name: modulo-ia-db
-      image: postgres:15
+      image: ankane/pgvector:latest
       environment:
         POSTGRES_DB: ${DB_NAME}
         POSTGRES_USER: ${DB_USER}
