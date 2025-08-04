@@ -7,3 +7,9 @@ PyJWT >=2.10.1
 cryptography>=45.0.5
 requests >=2.32.4
 httpx >=0.28.1
+python-docx
+pandas
+openpyxl
+PyPDF2
+llama-index
+pgvector
