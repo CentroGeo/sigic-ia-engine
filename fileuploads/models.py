@@ -1,4 +1,5 @@
 from django.db import models
+from pgvector.django import VectorField
 import uuid
 
 class Workspace(models.Model):
@@ -32,4 +33,14 @@ class Files(models.Model):
     document_id     = models.UUIDField(null=True, blank=True)
     document_type   = models.TextField()
     user_id         = models.UUIDField(null=True, blank=True)
+
+class DocumentEmbedding(models.Model):
+    file = models.ForeignKey('Files', on_delete=models.CASCADE, related_name='embeddings')
+    text = models.TextField()
+    embedding = VectorField(dimensions=1536)  # Asegúrate que coincida con la dimensión del modelo usado
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return f"Embedding for File ID {self.file.id}"
 

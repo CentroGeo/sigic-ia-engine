@@ -350,6 +350,28 @@ def create_admin_workspaces_contexts_files(request):
     """
         Guarado a geonode
     """
+
+    try:
+        from .utils import extract_text_from_file, vectorize_and_store_text
+
+        # 1. Extraer texto
+        extracted_text = extract_text_from_file(file)
+
+        # 2. Guardar archivo en Files model (si no se hace antes)
+        saved_file = Files.objects.create(
+            context_id=request.POST.get('context_id'),
+            user_id=user_id,
+            document_id=file.name,
+            document_type=file.content_type
+        )
+
+        # 3. Vectorizar y guardar en pgvector
+        vectorize_and_store_text(extracted_text, saved_file.id)
+
+    except Exception as e:
+        return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)
+
+
             
     return JsonResponse( {"status": "ok"}, safe=False)
 

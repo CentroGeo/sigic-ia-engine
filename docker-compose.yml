@@ -18,7 +18,7 @@ services:
   #Eliminar cuando apunte al db real
   db:
       container_name: modulo-ia-db
-      image: postgres:15
+      image: ankane/pgvector:latest
       environment:
         POSTGRES_DB: ${DB_NAME}
         POSTGRES_USER: ${DB_USER}
@@ -27,6 +27,7 @@ services:
       - "5434:5432"
       volumes:
         - postgres_data:/var/lib/postgresql/data/
+        - ./initdb:/docker-entrypoint-initdb.d
       restart: always
       networks:
         - red_prueba
