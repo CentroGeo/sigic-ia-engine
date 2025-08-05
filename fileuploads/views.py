@@ -334,78 +334,64 @@ def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
 
 @api_view(["GET", "POST"])
 def create_admin_workspaces_contexts_files(request):
+    allowed_extensions = ['pdf', 'txt', 'xls', 'xlsx']
     user_id = request.GET.get("user_id")
-
     file = request.FILES.get('file', None)
-    if file:
-        filename = file.name
-        file_extension = filename.split('.')[-1].lower()
-        
-        if file_extension not in ['']:
-            return JsonResponse(
-                {"error": "El archivo debe ser "},
-                status=400
-            )
+    if not file:
+        return JsonResponse({"error": "No se proporcionó ningún archivo."}, status=400)
     
+    filename = file.name
+    file_extension = filename.split('.')[-1].lower()
+    if file_extension not in allowed_extensions:
+        return JsonResponse(
+        {"error": f"Tipo de archivo no permitido. Se permiten: {', '.join(allowed_extensions)}"},
+        status=400
+    )
     """
         Guarado a geonode
     """
+    # from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text
+    from .utils import upload_file_to_geonode, extract_text_from_file, get_geonode_document_uuid
+
+
+    token = request.headers.get("Authorization")
+    cookie = request.headers.get("Cookie")
+    title = request.POST.get("title", "Sin título")
+
+    if not token:
+        return JsonResponse({"error": "Authorization header missing"}, status=400)
 
     try:
-        from .utils import extract_text_from_file, vectorize_and_store_text
+        geo_response = upload_file_to_geonode(file, token, cookie, title)
+        geo_response.raise_for_status()
+        geo_data = geo_response.json()
+        # print("Respuesta de GeoNode:", geo_data)
+        document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
+        # print("Valor de UUID que se va a guardar:", document_uuid)
+        # return JsonResponse(geo_response.json(), status=geo_response.status_code)
+    except Exception as e:
+        return JsonResponse({"error": f"Upload failed: {str(e)}"}, status=500)
 
+    try:
         # 1. Extraer texto
         extracted_text = extract_text_from_file(file)
-
         # 2. Guardar archivo en Files model (si no se hace antes)
         saved_file = Files.objects.create(
             context_id=request.POST.get('context_id'),
             user_id=user_id,
-            document_id=file.name,
+            # document_id=file.name, ######################################## acá iria el uuid
+            document_id=document_uuid,
             document_type=file.content_type
         )
 
         # 3. Vectorizar y guardar en pgvector
-        vectorize_and_store_text(extracted_text, saved_file.id)
+        # vectorize_and_store_text(extracted_text, saved_file.id)
 
     except Exception as e:
         return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)
 
-
-            
-    return JsonResponse( {"status": "ok"}, safe=False)
-
-@api_view(["POST"])
-@csrf_exempt
-def upload_to_geonode(request):
-    token = request.headers.get("Authorization")
-    cookie = request.headers.get("Cookie")
-    if not token:
-        return JsonResponse({"error": "Authorization header missing"}, status=400)
-    file = request.FILES.get("file")
-    title = request.POST.get("title", "Sin título")
-    if not file:
-        return JsonResponse({"error": "File not received"}, status=400)
-    try:
-        files = {
-            "doc_file": (file.name, file, file.content_type)
-        }
-        data = {
-            "title": title
-        }
-        headers = {
-            "Authorization": token
-        }
-        if cookie:
-            headers["Cookie"] = cookie
-        response = requests.post(
-            # "https://geonode.dev.geoint.mx/documents/upload?no__redirect=true",
-            "http://10.2.102.99/documents/upload?no__redirect=true",
-            files=files,
-            data=data,
-            headers=headers,
-            timeout=30
-        )
-        return JsonResponse(response.json(), status=response.status_code)
-    except Exception as e:
-        return JsonResponse({"error": str(e)}, status=500)
+    # return JsonResponse( {"status": "ok"}, safe=False)
+    return JsonResponse({
+        "status": "ok",
+        "geonode_response": geo_data
+    })
