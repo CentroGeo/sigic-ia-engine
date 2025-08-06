@@ -5,7 +5,10 @@ from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
 from fileuploads.models import Workspace, Context, Files
 from django.db import transaction
+from django.core.files.storage import FileSystemStorage
 from rest_framework import status
+from django.conf import settings
+from django.db.models import Count, Q
 import  json 
 import os
 import shutil
@@ -17,14 +20,19 @@ import requests
 @api_view(["GET", "POST"])
 def list_workspaces(request):
     user_id = request.GET.get("user_id")
+
+    list_workspaces = list(
+        Workspace.objects.filter(
+            Q(user_id=user_id) | Q(public=True),
+            active=True
+        ).annotate(
+            numero_fuentes=Count('files')  # 'files' es el nombre del related_name o relación inversa
+        ).values(
+            'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type', 'numero_fuentes'
+        )
+    )    
     
-    list_workspaces = list(Workspace.objects.filter(
-        Q(user_id=user_id) | Q(public=True),
-        active=True
-    ).values(
-        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
-    ))
-    
+
     
     return JsonResponse(list(list_workspaces), safe=False)
 
@@ -33,11 +41,15 @@ def list_workspaces(request):
 def list_admin_workspaces(request):
     user_id = request.GET.get("user_id")
     
-    list_workspaces = list(Workspace.objects.filter(
-        user_id=user_id,
-    ).values(
-        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
-    ))
+    list_workspaces = list(
+        Workspace.objects.filter(
+            Q(user_id=user_id) 
+        ).annotate(
+            numero_fuentes=Count('files')  # 'files' es el nombre del related_name o relación inversa
+        ).values(
+            'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type', 'numero_fuentes'
+        )
+    )   
     
     
     return JsonResponse(list(list_workspaces), safe=False)
@@ -45,62 +57,101 @@ def list_admin_workspaces(request):
 @api_view(["GET", "POST"])
 @csrf_exempt
 def create_admin_workspaces(request):
+    print("create_admin_workspaces")
     user_id = request.GET.get("user_id")
     workspace_data = request.POST.copy()
     answer = {
         "id": None,
-        "saved": False
+        "saved": False,
+        "files_uploaded": False,
+        "uploaded_files": []
     }
+
+    print(workspace_data)
     
-    file = request.FILES.get('file', None)
-    if file:
-        filename = file.name
-        file_extension = filename.split('.')[-1].lower()
-        
-        if file_extension not in ['jpg', 'jpeg', 'png']:
-            return JsonResponse(
-                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
-                status=400
-            )
-    
+   
     try:
         with transaction.atomic():
+            # Obtener datos del formulario
+            workspace_data = request.POST
+            #user_id = workspace_data.get("user_id")  # Asegúrate de enviar esto desde el front
             
             new_workspace               = Workspace()
             new_workspace.user_id       = user_id
             new_workspace.title         = workspace_data.get("title")
             new_workspace.description   = workspace_data.get("description")
-            new_workspace.public        = workspace_data.get("public")
+            #new_workspace.public        = workspace_data.get("public")
+            new_workspace.public        = workspace_data.get("public", "False").lower() == "true"
             
-            if file:   
-                new_workspace.image_type = file_extension
                 
             new_workspace.save()
-            
-            if file:   
-                try:
-                    # Crear el directorio si no existe
-                    upload_dir = "uploaded_images"
-                    if not os.path.exists(upload_dir):
-                        os.makedirs(upload_dir)
 
-                    workspaces_dir = os.path.join(upload_dir, "workspaces")
-                    if not os.path.exists(workspaces_dir):
-                        os.makedirs(workspaces_dir)
+
+            # 2. Procesar archivos si existen
+            # Procesar archivos si existen
+            if 'archivos' in request.FILES:
+                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(new_workspace.id)))
+                os.makedirs(fs.location, exist_ok=True)
+                
+                for uploaded_file in request.FILES.getlist('archivos'):
+                    # Guardar el archivo físicamente
+                    filename = fs.save(uploaded_file.name, uploaded_file)
+
+
                     
-                    # Guardar la imagen en el directorio
-                    file_path = os.path.join(workspaces_dir, '{}.{}'.format(new_workspace.id, file_extension))
-                    with open(file_path, "wb") as f:
-                        shutil.copyfileobj(file.file, f)
-                except:
-                    l = 0
+                    #Guardar info en la base de datos
+                    upload_file= Files()
+                    upload_file.document_type = uploaded_file.content_type
+                    upload_file.user_id = user_id
+                    upload_file.filename = filename
+                    upload_file.path = os.path.join('uploads/proyectos', str(new_workspace.id), filename)
+                    upload_file.workspace =new_workspace
+                    upload_file.save()
+
+                    #workspace_file = WorkspaceFile(
+                    #    workspace=new_workspace,
+                    #    file_name=uploaded_file.name,
+                    #    file_type=uploaded_file.content_type,
+                    #    file_size=uploaded_file.size,
+                    #    file_path=os.path.join('workspaces', str(new_workspace.id), filename),
+                    #    category="Archivo",
+                    #    origin="Propio"
+                    #)
+                    #workspace_file.save()
                     
+                    answer["uploaded_files"].append({
+                        "name": uploaded_file.name,
+                        "type": uploaded_file.content_type,
+                        "size": uploaded_file.size,
+                        "path": filename
+                    })
+                
+                answer["files_uploaded"] = True
+            
             answer["id"] = new_workspace.id
             answer["saved"] = True
+
         return JsonResponse(answer, status=200)
+    
     except Exception as e:
+        print("Error al guardar: ",str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
+        # Limpieza en caso de error
+"""         if 'new_workspace' in locals() and new_workspace.id:
+            try:
+                import shutil
+                workspace_dir = os.path.join(settings.MEDIA_ROOT, 'workspaces', str(new_workspace.id))
+                if os.path.exists(workspace_dir):
+                    shutil.rmtree(workspace_dir)
+            except Exception as cleanup_error:
+                print(f"Error durante limpieza: {cleanup_error}")
+        
+        return JsonResponse({
+            "status": "error",
+            "message": str(e),
+            "trace": traceback.format_exc() if settings.DEBUG else None
+        }, status=400) """
 
 @api_view(["GET", "POST"])
 @csrf_exempt
@@ -320,6 +371,19 @@ def edit_admin_workspaces_contexts(request, context_id):
 """
     Secciones de apis para files
 """
+
+@api_view(["GET", "POST"])
+def list_admin_workspaces_files(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    
+    list_files = list(Files.objects.filter(
+        workspace=workspace_id
+    ).values(
+        'id', 'document_id', 'document_type', 'user_id', 'context_id','filename','path'
+    ))
+    
+    return JsonResponse(list(list_files), safe=False)
+
 @api_view(["GET", "POST"])
 def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
     user_id = request.GET.get("user_id")

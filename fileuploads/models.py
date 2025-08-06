@@ -30,9 +30,12 @@ class Context(models.Model):
 
 class Files(models.Model):
     context         = models.ForeignKey(Context, on_delete=models.CASCADE, null=True)
+    workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
     document_id     = models.UUIDField(null=True, blank=True)
     document_type   = models.TextField()
     user_id         = models.UUIDField(null=True, blank=True)
+    filename        = models.TextField(default='')
+    path            = models.TextField(default='')
 
 class DocumentEmbedding(models.Model):
     file = models.ForeignKey('Files', on_delete=models.CASCADE, related_name='embeddings')
