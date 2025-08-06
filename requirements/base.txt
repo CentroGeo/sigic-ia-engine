@@ -13,3 +13,5 @@ openpyxl
 PyPDF2
 llama-index
 pgvector
+sentence-transformers
+transformers
