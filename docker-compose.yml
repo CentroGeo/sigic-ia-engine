@@ -1,3 +1,5 @@
+version: '3.9'
+
 services:
   django:
     build: .
@@ -6,16 +8,16 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - .:/app
+      - huggingface_cache:/root/.cache/huggingface
     ports:
       - "8001:8001"
-    depends_on: #Eliminar cuando apunte al DB real
+    depends_on:
       - db
     env_file: .env
     entrypoint: sh ./scripts/entrypoint.sh
     networks:
       - red_prueba
 
-  #Eliminar cuando apunte al db real
   db:
       container_name: modulo-ia-db
       image: ankane/pgvector:latest
@@ -34,6 +36,7 @@ services:
 
 volumes:
   postgres_data:
+  huggingface_cache:
  
 networks:
   red_prueba:

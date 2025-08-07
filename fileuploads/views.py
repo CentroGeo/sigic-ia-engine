@@ -456,5 +456,5 @@ def create_admin_workspaces_contexts_files(request):
     # return JsonResponse( {"status": "ok"}, safe=False)
     return JsonResponse({
         "status": "ok",
-        "geonode_response": geo_data
+        #"geonode_response": geo_data
     })

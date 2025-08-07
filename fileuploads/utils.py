@@ -2,14 +2,13 @@
 import pandas as pd
 import docx
 from PyPDF2 import PdfReader
+from sentence_transformers import SentenceTransformer
 from .models import DocumentEmbedding
-from llama_index.embeddings.huggingface import HuggingFaceEmbedding
 import io
 import requests
-# from django.http import JsonResponse
 import os
 
-embed_model = HuggingFaceEmbedding(model_name="sentence-transformers/all-MiniLM-L6-v2")
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def extract_text_from_file(file):
     ext = file.name.lower().split('.')[-1]
@@ -36,7 +35,7 @@ def extract_text_from_file(file):
         raise ValueError("Unsupported file type")
     
 def vectorize_and_store_text(text, file_id):
-    vector = embed_model.get_text_embedding(text)
+    vector = model.encode(text).tolist()
 
     DocumentEmbedding.objects.create(
         file_id=file_id,
