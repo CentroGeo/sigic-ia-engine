@@ -2,15 +2,13 @@
 import pandas as pd
 import docx
 from PyPDF2 import PdfReader
-# from llama_index.embeddings.openai import OpenAIEmbedding
-from fileuploads.models import DocumentEmbedding
-# import numpy as np
-# import csv
+from sentence_transformers import SentenceTransformer
+from .models import DocumentEmbedding
 import io
 import requests
-# from django.http import JsonResponse
 import os
 
+model = SentenceTransformer("all-MiniLM-L6-v2")
 
 def extract_text_from_file(file):
     ext = file.name.lower().split('.')[-1]
@@ -36,7 +34,14 @@ def extract_text_from_file(file):
     else:
         raise ValueError("Unsupported file type")
     
+def vectorize_and_store_text(text, file_id):
+    vector = model.encode(text).tolist()
 
+    DocumentEmbedding.objects.create(
+        file_id=file_id,
+        text=text,
+        embedding=vector
+    )
 
 def upload_file_to_geonode(file, token, cookie=None, title="Sin título"):
         files = {

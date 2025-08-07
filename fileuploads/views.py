@@ -3,12 +3,13 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
-from fileuploads.models import Workspace, Context, Files
+from .models import Workspace, Context, Files
 from django.db import transaction
 from django.core.files.storage import FileSystemStorage
 from rest_framework import status
 from django.conf import settings
 from django.db.models import Count, Q
+from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid
 import  json 
 import os
 import shutil
@@ -411,12 +412,6 @@ def create_admin_workspaces_contexts_files(request):
         {"error": f"Tipo de archivo no permitido. Se permiten: {', '.join(allowed_extensions)}"},
         status=400
     )
-    """
-        Guarado a geonode
-    """
-    # from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text
-    from .utils import upload_file_to_geonode, extract_text_from_file, get_geonode_document_uuid
-
 
     token = request.headers.get("Authorization")
     cookie = request.headers.get("Cookie")
@@ -444,12 +439,12 @@ def create_admin_workspaces_contexts_files(request):
             context_id=request.POST.get('context_id'),
             user_id=user_id,
             # document_id=file.name, ######################################## acá iria el uuid
-            document_id=document_uuid,
+            #document_id=document_uuid,
             document_type=file.content_type
         )
 
         # 3. Vectorizar y guardar en pgvector
-        # vectorize_and_store_text(extracted_text, saved_file.id)
+        vectorize_and_store_text(extracted_text, saved_file.id)
 
     except Exception as e:
         return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)
