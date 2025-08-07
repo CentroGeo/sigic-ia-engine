@@ -27,9 +27,10 @@ def list_workspaces(request):
             Q(user_id=user_id) | Q(public=True),
             active=True
         ).annotate(
-            numero_fuentes=Count('files')  # 'files' es el nombre del related_name o relación inversa
+            numero_fuentes=Count('files', distinct=True),  # 'files' es el nombre del related_name o relación inversa
+            numero_contextos=Count('contextos',filter=Q(contextos__active=True), distinct=True)  
         ).values(
-            'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type', 'numero_fuentes'
+            'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type', 'numero_fuentes', 'numero_contextos'
         )
     )    
     
@@ -44,13 +45,15 @@ def list_admin_workspaces(request):
     
     list_workspaces = list(
         Workspace.objects.filter(
-            Q(user_id=user_id) 
+            Q(user_id=user_id)
         ).annotate(
-            numero_fuentes=Count('files')  # 'files' es el nombre del related_name o relación inversa
+            numero_fuentes=Count('files', distinct=True), # 'files' es el nombre del related_name o relación inversa
+            numero_contextos=Count('contextos',filter=Q(contextos__active=True), distinct=True)  
         ).values(
-            'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type', 'numero_fuentes'
+            'id', 'title', 'description', 'user_id', 'active', 'public',
+            'created_date', 'image_type', 'numero_fuentes', 'numero_contextos'
         )
-    )   
+    )
     
     
     return JsonResponse(list(list_workspaces), safe=False)

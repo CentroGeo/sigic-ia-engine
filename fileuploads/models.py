@@ -14,7 +14,7 @@ class Workspace(models.Model):
     image_type     = models.TextField(default='', blank=True)
 
 class Context(models.Model):
-    workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
+    workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True, related_name="contextos")
     
     title           = models.TextField()
     description     = models.TextField(null=True, blank=True)
