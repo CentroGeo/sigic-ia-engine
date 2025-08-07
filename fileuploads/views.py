@@ -412,11 +412,7 @@ def create_admin_workspaces_contexts_files(request):
         {"error": f"Tipo de archivo no permitido. Se permiten: {', '.join(allowed_extensions)}"},
         status=400
     )
-    """
-        Guarado a geonode
-    """
 
-    """
     token = request.headers.get("Authorization")
     cookie = request.headers.get("Cookie")
     title = request.POST.get("title", "Sin título")
@@ -434,7 +430,7 @@ def create_admin_workspaces_contexts_files(request):
         # return JsonResponse(geo_response.json(), status=geo_response.status_code)
     except Exception as e:
         return JsonResponse({"error": f"Upload failed: {str(e)}"}, status=500)
-    """
+
     try:
         # 1. Extraer texto
         extracted_text = extract_text_from_file(file)
@@ -456,5 +452,5 @@ def create_admin_workspaces_contexts_files(request):
     # return JsonResponse( {"status": "ok"}, safe=False)
     return JsonResponse({
         "status": "ok",
-        #"geonode_response": geo_data
+        "geonode_response": geo_data
     })
