@@ -250,6 +250,7 @@ def list_admin_workspaces_contexts(request, workspace_id):
 
 @api_view(["GET", "POST"])
 def create_admin_workspaces_contexts(request):
+    print("crear contexto!!!!")
     user_id = request.GET.get("user_id")
     context_data = request.POST.copy()
     
@@ -258,56 +259,59 @@ def create_admin_workspaces_contexts(request):
         "saved": False
     }
     
-    file = request.FILES.get('file', None)
-    if file:
-        filename = file.name
-        file_extension = filename.split('.')[-1].lower()
-        
-        if file_extension not in ['jpg', 'jpeg', 'png']:
-            return JsonResponse(
-                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
-                status=400
-            )
+    print(context_data)
     
     try:
         with transaction.atomic():
-            getWorkspace = Workspace.objects.get(id=context_data.get("workspace_id"))
+            getWorkspace = Workspace.objects.get(id=context_data.get("proyecto_id"))
             
             new_context               = Context()
             new_context.workspace     = getWorkspace
+            #new_context.workspace     = context_data.get("proyecto_id")
             new_context.user_id       = user_id
-            new_context.title         = context_data.get("title")
-            new_context.description   = context_data.get("description")
-            new_context.public        = context_data.get("public")
-            
-            if file:   
-                new_context.image_type = file_extension
-                
+            new_context.title         = context_data.get("nombre")
+            new_context.description   = context_data.get("descripcion")
+            #new_context.public        = context_data.get("public")
             new_context.save()
             
-            if file:   
-                try:
-                    # Crear el directorio si no existe
-                    upload_dir = "uploaded_images"
-                    if not os.path.exists(upload_dir):
-                        os.makedirs(upload_dir)
+            
+            if 'file' in request.FILES:  #archivo de portada (imagen)
+                print("File!!!")
+                uploaded_file = request.FILES['file']
+                
+                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(new_context.id)))
+                os.makedirs(fs.location, exist_ok=True)
 
-                    contexts_dir = os.path.join(upload_dir, "contexts")
-                    if not os.path.exists(contexts_dir):
-                        os.makedirs(contexts_dir)
-                    
-                    # Guardar la imagen en el directorio
-                    file_path = os.path.join(contexts_dir, '{}.{}'.format(new_context.id, file_extension))
-                    with open(file_path, "wb") as f:
-                        shutil.copyfileobj(file.file, f)
-                except:
-                    l = 0
-                    
+                # Guardar el archivo físicamente
+                filename = fs.save(uploaded_file.name, uploaded_file)
+                file_path = os.path.join('uploads/contextos', str(new_context.id), filename)
+
+                # Guardar info en la base de datos
+                new_context.image_type  = file_path
+                new_context.save()
+                #upload_file = Files()
+                #upload_file.document_type = uploaded_file.content_type
+                #upload_file.user_id = user_id
+                #upload_file.filename = filename
+                #upload_file.path = os.path.join('uploads/contextos', str(new_context.id), filename)
+                #upload_file.context = new_context
+                #upload_file.save()
+
+                # Agregar detalles del archivo subido a la respuesta
+                answer["uploaded_file"] = {
+                    "name": uploaded_file.name,
+                    "type": uploaded_file.content_type,
+                    "size": uploaded_file.size,
+                    "path": filename
+                }
+                   
+            
             answer["id"] = new_context.id
             answer["saved"] = True
         
         return JsonResponse(answer, status=200)    
     except Exception as e:
+        print("Error al guardar contexto: ",e)
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
 @api_view(["GET", "POST"])
