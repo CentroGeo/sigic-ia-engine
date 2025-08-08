@@ -3,7 +3,7 @@ from django.http import JsonResponse
 from rest_framework.decorators import api_view
 from django.views.decorators.csrf import csrf_exempt
 from django.db.models import Q
-from .models import Workspace, Context, Files
+from .models import Workspace, Context, Files, DocumentEmbedding
 from django.db import transaction
 from django.core.files.storage import FileSystemStorage
 from rest_framework import status
@@ -14,6 +14,11 @@ import  json
 import os
 import shutil
 import requests
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from .embeddings_service import embedder
+import uuid
+#import textract
+#import magic
 
 """
     Secciones de apis para workspaces
@@ -96,12 +101,19 @@ def create_admin_workspaces(request):
             if 'archivos' in request.FILES:
                 fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(new_workspace.id)))
                 os.makedirs(fs.location, exist_ok=True)
+
+                text_splitter = RecursiveCharacterTextSplitter(
+                    chunk_size=1000,
+                    chunk_overlap=200,
+                    length_function=len
+                )                
                 
                 for uploaded_file in request.FILES.getlist('archivos'):
                     # Guardar el archivo físicamente
+                    print(uploaded_file)
                     filename = fs.save(uploaded_file.name, uploaded_file)
 
-
+                    
                     
                     #Guardar info en la base de datos
                     upload_file= Files()
@@ -111,17 +123,43 @@ def create_admin_workspaces(request):
                     upload_file.path = os.path.join('uploads/proyectos', str(new_workspace.id), filename)
                     upload_file.workspace =new_workspace
                     upload_file.save()
+                    archivo_id = upload_file.id
+                    print(archivo_id)
 
-                    #workspace_file = WorkspaceFile(
-                    #    workspace=new_workspace,
-                    #    file_name=uploaded_file.name,
-                    #    file_type=uploaded_file.content_type,
-                    #    file_size=uploaded_file.size,
-                    #    file_path=os.path.join('workspaces', str(new_workspace.id), filename),
-                    #    category="Archivo",
-                    #    origin="Propio"
-                    #)
-                    #workspace_file.save()
+                    #extraer texto
+                    extracted_text = extract_text_from_file(uploaded_file)
+
+                    # Detectar idioma
+                    language = embedder.detect_language(extracted_text)
+
+                    # Dividir texto en chunks
+                    chunks = text_splitter.split_text(extracted_text)   
+
+                    # Generar embeddings por lotes (batch) para mejor rendimiento
+                    embeddings = embedder.embed_texts(chunks)    
+
+                    # Guardar chunks con embeddings
+                    DocumentEmbedding.objects.bulk_create([
+                        DocumentEmbedding(
+                            file=upload_file,
+                            chunk_index=idx,
+                            text=chunk,
+                            embedding=embedding,
+                            language=language,
+                            metadata={
+                                "source": uploaded_file.name,
+                                "content_type": uploaded_file.content_type,
+                                "chunk_size": len(chunk)
+                            }
+                        )
+                        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+                    ])
+                    
+                    upload_file.processed = True
+                    #upload_file.size = os.path.getsize(filename)
+                    upload_file.language = language
+                    upload_file.save()                                                     
+
                     
                     answer["uploaded_files"].append({
                         "name": uploaded_file.name,
@@ -263,6 +301,8 @@ def create_admin_workspaces_contexts(request):
     }
     
     print(context_data)
+
+    fuentes_raw = context_data.get("fuentes")  # ← es un string tipo "[3,4,5]"
     
     try:
         with transaction.atomic():
@@ -276,8 +316,22 @@ def create_admin_workspaces_contexts(request):
             new_context.description   = context_data.get("descripcion")
             #new_context.public        = context_data.get("public")
             new_context.save()
+
+            if fuentes_raw: #fuentes seleccionadas
+                try:
+                    fuentes_ids = json.loads(fuentes_raw)  # ← ahora es una lista [3, 4, 5]
+
+                    if isinstance(fuentes_ids, list):
+                        existing_files = Files.objects.filter(id__in=fuentes_ids)
+
+                        for file_instance in existing_files:
+                            new_context.files.add(file_instance)
+
+                except json.JSONDecodeError as e:
+                    print("Error al parsear fuentes:", e)            
             
             
+
             if 'file' in request.FILES:  #archivo de portada (imagen)
                 print("File!!!")
                 uploaded_file = request.FILES['file']
@@ -292,6 +346,7 @@ def create_admin_workspaces_contexts(request):
                 # Guardar info en la base de datos
                 new_context.image_type  = file_path
                 new_context.save()
+
                 #upload_file = Files()
                 #upload_file.document_type = uploaded_file.content_type
                 #upload_file.user_id = user_id
@@ -387,7 +442,7 @@ def list_admin_workspaces_files(request, workspace_id):
     list_files = list(Files.objects.filter(
         workspace=workspace_id
     ).values(
-        'id', 'document_id', 'document_type', 'user_id', 'context_id','filename','path'
+        'id', 'document_id', 'document_type', 'user_id', 'filename','path'
     ))
     
     return JsonResponse(list(list_files), safe=False)
@@ -461,3 +516,25 @@ def create_admin_workspaces_contexts_files(request):
         "status": "ok",
         "geonode_response": geo_data
     })
+
+
+def embeddingFile(archivo_id,file,context_id,user_id,document_type):
+    print("######## embeddingFile #####")
+    try:
+        # 1. Extraer texto
+        extracted_text = extract_text_from_file(file)
+        print(extracted_text)
+        # 2. Guardar archivo en Files model (si no se hace antes)
+        # saved_file = Files.objects.create(
+        #     context_id=request.POST.get('context_id'),
+        #     user_id=user_id,
+        #     # document_id=file.name, ######################################## acá iria el uuid
+        #     #document_id=document_uuid,
+        #     document_type=file.content_type
+        # )
+
+        # 3. Vectorizar y guardar en pgvector
+        vectorize_and_store_text(extracted_text, archivo_id)
+
+    except Exception as e:
+        return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)

@@ -6,7 +6,10 @@ from django.http import JsonResponse
 from django.views.decorators.csrf import csrf_exempt
 from django.http import StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
-from chat.models import History
+from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
+from fileuploads.embeddings_service  import embedder
+from pgvector.django import L2Distance
+from .models import History
 import time
 import threading
 import requests
@@ -18,6 +21,16 @@ llm_lock: threading.Lock = threading.Lock()
 def chat(request):
     server = "http://host.docker.internal:11434"
     payload = request.data
+
+    # Validaciones requeridas
+    if 'type' not in payload or payload['type'] not in ['Preguntar', 'RAG']:
+        return JsonResponse({"error": "El parámetro 'type' debe ser 'Preguntar' o 'RAG'"}, status=400)    
+
+
+    if payload['type'] == 'RAG' and 'context_id' not in payload:
+        return JsonResponse({"error": "Se requiere context_id para tipo RAG"}, status=400)
+
+    # Configuración para Ollama
     updated_payload = {
         **payload,
         "stream": True,
@@ -31,38 +44,122 @@ def chat(request):
         # }
     }
     
+    # Adquirir lock para evitar sobrecarga
     acquired = llm_lock.acquire(blocking=False)
     if not acquired:
-        return JsonResponse({
-            "error": "Servicio ocupado, intenta más tarde"
-        }, status=503)
+        return JsonResponse({"error": "Servicio ocupado, intenta más tarde"}, status=503)
 
     
     def event_stream(payload):
         try:
+            #new_messages = [payload["messages"][-1]]  # Último mensaje del usuario
             new_messages = [payload["messages"][1]]
-            llm_response = {"role": "user", "content": ''}
+            llm_response = {"role": "AI", "content": ''}
+            relevant_docs = []
+
+
+            #Procesamiento para RAG
+            if payload['type'] == 'RAG':
+                context = Context.objects.get(id=payload['context_id'])
+                query = payload["messages"][1]["content"]
+                
+                # 1. Generar embedding de la consulta
+                query_embedding = embedder.embed_query(query)
+                
+                # 2. Buscar chunks relevantes en los archivos del contexto
+                relevant_chunks = DocumentEmbedding.objects.filter(
+                    file__contexts__id=context.id
+                ).annotate(
+                    similarity=1 - L2Distance('embedding', query_embedding)
+                ).order_by('-similarity')[:20]  # Top 3 chunks más relevantes
+                
+                # 3. Construir contexto RAG
+                if relevant_chunks:
+                    rag_context = "Contexto relevante:\n"
+                    rag_context += "\n---\n".join([
+                        f"Documento: {chunk.file.filename}\nContenido: {chunk.text[:1000]}"
+                        for chunk in relevant_chunks
+                    ])
+                    print(f"[DEBUG] rag_context: {rag_context}")
+                    
+                    # 4. Modificar el prompt para Ollama
+                    updated_payload["messages"].insert(0, {
+                        "role": "system",
+                        "content": f"""Responde basándote exclusivamente en el siguiente contexto.
+                        {rag_context}
+                        Si la pregunta no puede responderse con el contexto, di amablemente que no tienes información suficiente."""
+                    })
+                    
+                    relevant_docs = list({chunk.file.filename for chunk in relevant_chunks})
             
-            with requests.post(f"{server}/api/chat", json=updated_payload,  headers={"Content-Type": "application/json"}, timeout=500, stream=True) as resp:
+            # Conexión con Ollama
+            with requests.post(
+                f"{server}/api/chat",
+                json=updated_payload,
+                headers={"Content-Type": "application/json"},
+                timeout=500,
+                stream=True
+            ) as resp:
                 resp.raise_for_status()
+                
                 for line in resp.iter_lines(decode_unicode=True):
+                    # if line:
+                    #     yield f"data: {line}\n"
+                    #     #line_json = json.loads(line.decode("utf-8"))
+                    #     line_json = json.loads(line)
+                    #     llm_response["content"] += str(line_json['message']["content"])
                     print(f"[DEBUG] tipo de line: {type(line)} - contenido: {repr(line)}")
                     yield f"{line}\n"
                     line_json = json.loads(line.decode("utf-8"))
                     llm_response["content"] += str(line_json['message']["content"])
-                    time.sleep(0.2)
-
-                new_messages.append(llm_response)
+                    #time.sleep(0.2)      
+                new_messages.append(llm_response)              
+            
+            # Guardar en el historial
+            update_history = History.objects.get(id=payload['chat_id'])
+            
+            if update_history.history_array is None: #es nuevochat
+                update_history.history_array = []
                 
-                if payload['type'] == 'Preguntar':
-                    update_history                  = History.objects.get(id=payload['chat_id'])
+            update_history.history_array    = update_history.history_array + new_messages
+            #update_history.history_array.extend([new_messages[0], llm_response])
+            update_history.job_status = "Finalizado"
+            
+            # Guardar metadatos RAG si aplica
+            # if payload['type'] == 'RAG':
+            #     update_history.rag_metadata = {
+            #         "context_id": payload['context_id'],
+            #         "context_title": context.title,
+            #         "documents_used": relevant_docs,
+            #         "query": query
+            #     }
+            
+            update_history.save()
+
+            
+            # with requests.post(f"{server}/api/chat", json=updated_payload,  headers={"Content-Type": "application/json"}, timeout=500, stream=True) as resp:
+            #     resp.raise_for_status()
+            #     for line in resp.iter_lines(decode_unicode=True):
+            #         print(f"[DEBUG] tipo de line: {type(line)} - contenido: {repr(line)}")
+            #         yield f"{line}\n"
+            #         line_json = json.loads(line.decode("utf-8"))
+            #         llm_response["content"] += str(line_json['message']["content"])
+            #         time.sleep(0.2)
+
+            #     new_messages.append(llm_response)
+                
+            #     if payload['type'] == 'Preguntar':
+            #         update_history                  = History.objects.get(id=payload['chat_id'])
                     
-                    if(update_history.history_array == None):
-                        update_history.history_array = []
+            #         if(update_history.history_array == None):
+            #             update_history.history_array = []
                         
-                    update_history.history_array    = update_history.history_array + new_messages
-                    update_history.job_status       = "Finalizado"
-                    update_history.save()
+            #         update_history.history_array    = update_history.history_array + new_messages
+            #         update_history.job_status       = "Finalizado"
+            #         update_history.save()
+
+
+
         except Exception as e:
             print("[DEBUG] error: " + str(e))
             update_history                  = History.objects.get(id=payload['chat_id'])    

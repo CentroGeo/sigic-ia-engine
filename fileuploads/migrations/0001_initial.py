@@ -48,7 +48,10 @@ class Migration(migrations.Migration):
                 ('document_id', models.UUIDField(blank=True, null=True)),
                 ('document_type', models.TextField()),
                 ('user_id', models.UUIDField(blank=True, null=True)),
-                ('context', models.ForeignKey(null=True, on_delete=django.db.models.deletion.CASCADE, to='fileuploads.context')),
+                ('filename', models.TextField(default='')),
+                ('path', models.TextField(default='')),
+                ('created_date', models.DateTimeField(auto_now_add=True)),
+                
             ],
         ),
         migrations.CreateModel(
@@ -56,9 +59,10 @@ class Migration(migrations.Migration):
             fields=[
                 ('id', models.BigAutoField(auto_created=True, primary_key=True, serialize=False, verbose_name='ID')),
                 ('text', models.TextField()),
-                ('embedding', pgvector.django.vector.VectorField(dimensions=384)),
-                ('created_at', models.DateTimeField(auto_now_add=True)),
+                ('chunk_index', models.IntegerField()),
+                ('embedding', pgvector.django.vector.VectorField(dimensions=768)),
                 ('file', models.ForeignKey(on_delete=django.db.models.deletion.CASCADE, related_name='embeddings', to='fileuploads.files')),
+                ('created_date', models.DateTimeField(auto_now_add=True)),
             ],
         ),
         migrations.AddField(

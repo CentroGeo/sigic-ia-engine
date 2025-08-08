@@ -7,10 +7,10 @@ while ! nc -z db 5432; do
 done
 
 echo "Base de datos disponible, ejecutando migraciones..."
-
+python manage.py makemigrations --noinput
 python manage.py migrate --noinput
 
-python manage.py collectstatic --noinput
+#python manage.py collectstatic --noinput
 
 echo "Iniciando el servidor Gunicorn..."
 exec gunicorn llm.wsgi:application \

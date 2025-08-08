@@ -13,13 +13,13 @@ RUN apt-get update && apt-get install -y \
 COPY requirements/base.txt .
 
 # Instala torch versión CPU estable (optimizado)
-RUN pip install torch==2.3.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
+#RUN pip install torch==2.3.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html
 
 RUN pip install --no-cache-dir -r base.txt
 #RUN pip install --no-cache-dir sentence-transformers==2.2.2
 
 # Precarga modelo
-RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
+#RUN python -c "from sentence_transformers import SentenceTransformer; SentenceTransformer('all-MiniLM-L6-v2')"
 
 COPY . .
 
