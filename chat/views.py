@@ -9,6 +9,7 @@ from django.core.serializers.json import DjangoJSONEncoder
 from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
 from fileuploads.embeddings_service  import embedder
 from pgvector.django import L2Distance
+from .serializers import HistoryMiniSerializer
 from .models import History
 import time
 import threading
@@ -108,7 +109,7 @@ def chat(request):
                     #     #line_json = json.loads(line.decode("utf-8"))
                     #     line_json = json.loads(line)
                     #     llm_response["content"] += str(line_json['message']["content"])
-                    print(f"[DEBUG] tipo de line: {type(line)} - contenido: {repr(line)}")
+                    #print(f"[DEBUG] tipo de line: {type(line)} - contenido: {repr(line)}")
                     yield f"{line}\n"
                     line_json = json.loads(line.decode("utf-8"))
                     llm_response["content"] += str(line_json['message']["content"])
@@ -191,6 +192,9 @@ def historyGenerate(request):
                 new_history.job_id           = payload['session_id']
                 new_history.job_status       = "Iniciado"
                 new_history.save()
+
+                existing_context = Context.objects.get(id=payload['context_id'])
+                new_history.context.add(existing_context)
                 
                 response_model['chat_id']    = new_history.id
             else:
@@ -200,7 +204,8 @@ def historyGenerate(request):
                 update_history.job_id           = payload['session_id']
                 update_history.job_status       = "Iniciado"
                 update_history.save()
-                
+
+              
                 response_model['chat_id']    = update_history.id
                 
             return JsonResponse(response_model, status=200)
@@ -225,4 +230,21 @@ def historyUser(request):
             return JsonResponse({"error": "Metodo no permitido"}, status=405)
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
-    
+
+
+
+@api_view(['GET','POST'])   
+@csrf_exempt
+def get_chat_histories(request):
+    #devuelva la lista de chats, si se manda el user_id, lo filtra, si no, trae todas
+    user_id = request.GET.get('user_id')
+
+    if user_id:
+        histories = History.objects.filter(user_id=user_id)
+    else:
+        histories = History.objects.all()
+
+    histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
+
+    serializer = HistoryMiniSerializer(histories, many=True)
+    return Response(serializer.data)
