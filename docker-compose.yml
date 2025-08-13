@@ -2,7 +2,10 @@ version: '3.9'
 
 services:
   django:
-    build: .
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-dev}
     container_name: modulo-ia-django
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -12,10 +15,10 @@ services:
       - "8001:8001"
     depends_on:
       - db
-    env_file: .env
+    env_file: .env_dev
     entrypoint: sh ./scripts/entrypoint.sh
     networks:
-      - red_prueba
+      - red_geolex
 
   db:
       container_name: modulo-ia-db
@@ -31,14 +34,14 @@ services:
         - ./initdb:/docker-entrypoint-initdb.d
       restart: always
       networks:
-        - red_prueba
+        - red_geolex
 
 volumes:
   postgres_data:
  
 networks:
-  red_prueba:
-    name: red_prueba
+  red_geolex:
+    name: red_geolex
     
 #run comand
 #docker compose up --build

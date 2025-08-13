@@ -1,0 +1,47 @@
+version: '3.9'
+
+services:
+  django:
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-prod}
+    container_name: modulo-ia-django
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+    ports:
+      - "8001:8001"
+    #depends_on:
+    #  - db
+    env_file: .env_prod
+    entrypoint: sh ./scripts/entrypoint.sh
+    networks:
+      - red_geolex
+
+  #db:
+  #    container_name: modulo-ia-db
+  #    image: ankane/pgvector:latest
+  #    environment:
+  #      POSTGRES_DB: ${DB_NAME}
+  #      POSTGRES_USER: ${DB_USER}
+  #      POSTGRES_PASSWORD: ${DB_PASSWORD}
+  #    ports:
+  #    - "5434:5432"
+  #    volumes:
+  #      - postgres_data:/var/lib/postgresql/data/
+  #      - ./initdb:/docker-entrypoint-initdb.d
+  #    restart: always
+  #    networks:
+  #      - red_geolex
+
+volumes:
+  postgres_data:
+ 
+networks:
+  red_geolex:
+    name: red_geolex
+    
+#run comand
+#docker compose up --build
