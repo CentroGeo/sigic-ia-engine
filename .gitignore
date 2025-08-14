@@ -4,7 +4,7 @@ __pycache__/
 *.sqlite3
 *.log
 *.env
-.env*
+#.env*
 db.sqlite3
 
 # Django static/media
