@@ -279,12 +279,18 @@ def list_workspaces_contexts(request, workspace_id):
 def list_admin_workspaces_contexts(request, workspace_id):
     user_id = request.GET.get("user_id")
     
-    list_workspaces_contexts = list(Context.objects.filter(
-        user_id=user_id,
-        workspace_id=workspace_id
-    ).values(
-        'id', 'title', 'description', 'user_id', 'active', 'public', 'created_date', 'image_type'
-    ))
+    list_workspaces_contexts = list(
+        Context.objects.filter(
+            user_id=user_id,
+            workspace_id=workspace_id
+        )
+        .annotate(num_files=Count('files'))
+        .values(
+            'id', 'title', 'description', 'user_id', 'active',
+            'public', 'created_date', 'image_type',
+            'num_files'  # número de archivos asociados al context
+        )
+    )
     
     
     return JsonResponse(list(list_workspaces_contexts), safe=False)
