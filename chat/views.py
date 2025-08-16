@@ -54,8 +54,29 @@ def chat(request):
     def event_stream(payload):
         try:
             #new_messages = [payload["messages"][-1]]  # Último mensaje del usuario
-            new_messages = [payload["messages"][1]]
-            llm_response = {"role": "AI", "content": ''}
+            #new_messages = [payload["messages"][1]]
+
+            # Recuperar historial previo desde la base de datos
+            history_obj = History.objects.get(id=payload['chat_id'])
+            history_array = history_obj.history_array or []
+
+            # Agregar el nuevo mensaje del usuario al final del historial
+            history_array.append(payload["messages"][1])
+
+            # Usar el historial completo como new_messages
+            new_messages = history_array.copy()
+
+            #TODO: limitar el historial conversacional a N mensajes
+            #MAX_MESSAGES = 30
+            #if len(new_messages) > MAX_MESSAGES:
+            #    new_messages = new_messages[-MAX_MESSAGES:]
+
+
+            # Actualizar el payload para Ollama
+            updated_payload["messages"] = new_messages
+
+
+            llm_response = {"role": "assistant", "content": ''}
             relevant_docs = []
 
 
@@ -72,7 +93,7 @@ def chat(request):
                     file__contexts__id=context.id
                 ).annotate(
                     similarity=1 - L2Distance('embedding', query_embedding)
-                ).order_by('-similarity')[:20]  # Top 3 chunks más relevantes
+                ).order_by('-similarity')[:50]  # Top N chunks más relevantes
                 
                 # 3. Construir contexto RAG
                 if relevant_chunks:
@@ -81,12 +102,12 @@ def chat(request):
                         f"Documento: {chunk.file.filename}\nContenido: {chunk.text[:1000]}"
                         for chunk in relevant_chunks
                     ])
-                    print(f"[DEBUG] rag_context: {rag_context}")
+                    #print(f"[DEBUG] rag_context: {rag_context}")
                     
                     # 4. Modificar el prompt para Ollama
                     updated_payload["messages"].insert(0, {
                         "role": "system",
-                        "content": f"""Responde basándote exclusivamente en el siguiente contexto.
+                        "content": f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial. Responde siempre en español. Responde consideando en el siguiente contexto:
                         {rag_context}
                         Si la pregunta no puede responderse con el contexto, di amablemente que no tienes información suficiente."""
                     })
@@ -94,6 +115,7 @@ def chat(request):
                     relevant_docs = list({chunk.file.filename for chunk in relevant_chunks})
             
             # Conexión con Ollama
+            print(updated_payload)
             with requests.post(
                 f"{server}/api/chat",
                 json=updated_payload,
@@ -122,8 +144,15 @@ def chat(request):
             if update_history.history_array is None: #es nuevochat
                 update_history.history_array = []
                 
-            update_history.history_array    = update_history.history_array + new_messages
+            #update_history.history_array    = update_history.history_array + new_messages
             #update_history.history_array.extend([new_messages[0], llm_response])
+            #update_history.history_array = new_messages + [llm_response]
+
+            # Filtrar mensajes "system" antes de guardar
+            cleaned_messages = [msg for msg in new_messages if msg.get("role") != "system"]
+            #update_history.history_array = cleaned_messages + [llm_response]
+            update_history.history_array = cleaned_messages
+
             update_history.job_status = "Finalizado"
             
             # Guardar metadatos RAG si aplica
