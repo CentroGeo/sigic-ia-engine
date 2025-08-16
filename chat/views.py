@@ -23,6 +23,9 @@ def chat(request):
     server = "http://host.docker.internal:11434"
     payload = request.data
 
+    model= payload["model"]
+    print("modelo: ",model, flush=True)
+
     # Validaciones requeridas
     if 'type' not in payload or payload['type'] not in ['Preguntar', 'RAG']:
         return JsonResponse({"error": "El parámetro 'type' debe ser 'Preguntar' o 'RAG'"}, status=400)    
@@ -154,6 +157,23 @@ def chat(request):
             update_history.history_array = cleaned_messages
 
             update_history.job_status = "Finalizado"
+
+            # Generar título basado en la primera pregunta y respuesta
+            # 7. Generar título si es la primera interacción y aún no hay título
+            print("cleaned_messages length: ",len(cleaned_messages), flush=True)
+            print("cleaned_messages:", flush=True)
+            print(update_history.title, flush=True)
+            print(cleaned_messages, flush=True)
+            #if update_history.title is None and len(cleaned_messages) == 2:
+            if update_history.title is None:
+                first_question = cleaned_messages[0]["content"]
+                first_answer = cleaned_messages[1]["content"]
+                #first_answer = llm_response["content"]
+                generated_title = generate_chat_title(server, first_question, first_answer, model)
+                if generated_title:
+                    update_history.title = generated_title              
+
+
             
             # Guardar metadatos RAG si aplica
             # if payload['type'] == 'RAG':
@@ -277,3 +297,53 @@ def get_chat_histories(request):
 
     serializer = HistoryMiniSerializer(histories, many=True)
     return Response(serializer.data)
+
+
+
+def generate_chat_title(server_url: str, question: str, answer: str, model_name: str ) -> str:
+    """
+    Genera un título breve (máximo 6 palabras) a partir de la primera pregunta y respuesta.
+    
+    Args:
+        server_url (str): URL base del servidor Ollama (ej: "http://host.docker.internal:11434").
+        question (str): Primera pregunta del usuario.
+        answer (str): Primera respuesta del modelo.
+
+    Returns:
+        str: Título generado (máximo 255 caracteres). Si hay error, devuelve None.
+    """
+    try:
+        print("generando título para el chat...", flush=True)
+        prompt = [
+            {
+                "role": "system",
+                "content": "Genera un título muy corto (máximo 6 palabras) o una frase corta que resuma esta conversación."
+            },
+            {
+                "role": "user",
+                "content": f"Pregunta: {question}\nRespuesta: {answer}"
+            }
+        ]
+        print(prompt, flush=True)
+        payload = {
+            "model": model_name,
+            "messages": prompt,
+            "stream": False,
+            "think": False
+        }
+
+        response = requests.post(
+            f"{server_url}/api/chat",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=30
+        )
+        response.raise_for_status()
+        title_data = response.json()
+        title = title_data["message"]["content"].strip()
+        print(title, flush=True)
+        return title[:255]  # Limita a 255 caracteres por seguridad
+
+    except Exception as e:
+        print(f"[ERROR] Error generando título del chat: {str(e)}", flush=True)
+        return None

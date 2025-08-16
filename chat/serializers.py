@@ -21,4 +21,4 @@ class HistoryMiniSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = History
-        fields = ['id', 'credate_date', 'context']
+        fields = ['id', 'credate_date','title', 'context']
