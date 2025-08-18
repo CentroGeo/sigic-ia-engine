@@ -2,14 +2,22 @@
 
 set -e  # Salir si hay error
 
-# Cargar variables de entorno desde .env si existe
-[ -f .env ] && export $(grep -v '^#' .env | xargs)
+# Determinar entorno (por DJANGO_ENV o default "dev")
+#DJANGO_ENV=${DJANGO_ENV:-dev}
+#ENV_FILE=".env_${DJANGO_ENV}"
 
-echo "Entorno Django: ${DJANGO_ENV:-dev}"
+# Cargar variables si el archivo existe
+#if [ -f "$ENV_FILE" ]; then
+#  echo "Cargando variables desde $ENV_FILE"
+#  set -o allexport
+#  . "$ENV_FILE"
+#  set +o allexport
+#else
+#  echo "⚠️ Archivo de entorno $ENV_FILE no encontrado. Algunas variables pueden faltar."
+#fi
 
-# Usar 'dev' como valor por defecto si no se define DJANGO_ENV
-DJANGO_SETTINGS="llm.settings.${DJANGO_ENV:-dev}"
-
+echo "Entorno Django: ${DJANGO_ENV}"
+DJANGO_SETTINGS="llm.settings.${DJANGO_ENV}"
 
 echo "Esperando a que la base de datos esté disponible..."
 
@@ -26,7 +34,14 @@ python manage.py migrate --noinput
 
 #python manage.py collectstatic --noinput
 
-echo "Iniciando el servidor Gunicorn..."
-exec gunicorn llm.wsgi:application \
-  --bind 0.0.0.0:8001 --timeout 600 --workers=1 --threads=2 \
-  --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
+# Iniciar servidor según entorno
+if [ "${DJANGO_ENV}" = "dev" ]; then
+  echo "▶️ Iniciando servidor de desarrollo con autoreload"
+  exec python manage.py runserver 0.0.0.0:8001 --settings=$DJANGO_SETTINGS
+else
+  echo "✅✅ Iniciando servidor Gunicorn para producción..."
+  exec gunicorn llm.wsgi:application \
+    --bind 0.0.0.0:8001 --timeout 600 --workers=1 --threads=2 \
+    --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
+fi
+  

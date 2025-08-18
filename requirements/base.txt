@@ -19,7 +19,7 @@ PyPDF2==3.0.1
 
 # Embeddings
 sentence-transformers==2.6.1
-transformers==4.38.2
+#transformers==4.38.2
 #huggingface_hub==0.23.0
 #torch==2.3.1+cpu
 scikit-learn==1.4.2
@@ -34,5 +34,5 @@ python-dotenv
 langdetect
 python-magic
 #torch
-#transformers
+transformers
 ollama

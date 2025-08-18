@@ -19,8 +19,7 @@ COPY requirements/ requirements/
 # Instalar requirements dinámicamente según entorno
 RUN pip install --upgrade pip && \
     if [ "$BUILD_ENV" = "dev" ]; then \
-      pip install -r requirements/dev.txt && \
-      pip install torch==2.3.1+cpu -f https://download.pytorch.org/whl/cpu/torch_stable.html; \
+        pip install -r requirements/dev.txt; \
     else \
         pip install -r requirements/prod.txt; \
     fi

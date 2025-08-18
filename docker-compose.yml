@@ -2,6 +2,7 @@ version: '3.9'
 
 services:
   django:
+    env_file: .env_dev
     build:
       context: .
       args:
@@ -15,7 +16,7 @@ services:
       - "8001:8001"
     depends_on:
       - db
-    env_file: .env_dev
+    
     entrypoint: sh ./scripts/entrypoint.sh
     networks:
       - red_geolex
@@ -24,9 +25,9 @@ services:
       container_name: modulo-ia-db
       image: ankane/pgvector:latest
       environment:
-        POSTGRES_DB: ${DB_NAME}
-        POSTGRES_USER: ${DB_USER}
-        POSTGRES_PASSWORD: ${DB_PASSWORD}
+        POSTGRES_DB: llm
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
       ports:
       - "5434:5432"
       volumes:
