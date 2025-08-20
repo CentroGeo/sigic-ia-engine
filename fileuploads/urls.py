@@ -18,5 +18,8 @@ urlpatterns = [
     path('workspaces/admin/<int:workspace_id>/files', views.list_admin_workspaces_files, name='admin-workspaces-files-list'),  
     
     path('workspaces/admin/<int:workspace_id>/contexts/<int:context_id>/files', views.list_admin_workspaces_contexts_files, name='admin-contexts-files-list'),   
-    path('workspaces/admin/contexts/files/create', views.create_admin_workspaces_contexts_files, name='contexts-files-create'),   
+    path('workspaces/admin/contexts/files/create', views.create_admin_workspaces_contexts_files, name='contexts-files-create'),
+
+    path('cache/status', views.cache_status, name='cache-status'),
+    path('cache/cleanup', views.force_cache_cleanup, name='cache-cleanup'),
 ]

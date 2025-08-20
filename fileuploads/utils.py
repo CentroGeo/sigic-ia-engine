@@ -57,6 +57,7 @@ def upload_file_to_geonode(file, token, cookie=None, title="Sin título"):
             headers["Cookie"] = cookie
         geonode_base_url = os.environ.get("GEONODE_SERVER")
         upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
+
         response = requests.post(
             upload_url,
             files=files,
@@ -65,6 +66,7 @@ def upload_file_to_geonode(file, token, cookie=None, title="Sin título"):
             timeout=30
         )
         return  response
+        return "ok"
 
 def get_geonode_document_uuid(doc_url):
     """

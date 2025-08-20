@@ -17,6 +17,7 @@ import requests
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 import uuid
+from typing import List
 #import textract
 #import magic
 
@@ -63,6 +64,9 @@ def list_admin_workspaces(request):
     
     return JsonResponse(list(list_workspaces), safe=False)
 
+
+# En fileuploads/views.py - Actualizar la función create_admin_workspaces
+
 @api_view(["GET", "POST"])
 @csrf_exempt
 def create_admin_workspaces(request):
@@ -77,123 +81,173 @@ def create_admin_workspaces(request):
     }
 
     print(workspace_data)
-    
-   
+
     try:
         with transaction.atomic():
             # Obtener datos del formulario
             workspace_data = request.POST
-            #user_id = workspace_data.get("user_id")  # Asegúrate de enviar esto desde el front
-            
-            new_workspace               = Workspace()
-            new_workspace.user_id       = user_id
-            new_workspace.title         = workspace_data.get("title")
-            new_workspace.description   = workspace_data.get("description")
-            #new_workspace.public        = workspace_data.get("public")
-            new_workspace.public        = workspace_data.get("public", "False").lower() == "true"
-            
-                
+
+            new_workspace = Workspace()
+            new_workspace.user_id = user_id
+            new_workspace.title = workspace_data.get("title")
+            new_workspace.description = workspace_data.get("description")
+            new_workspace.public = workspace_data.get("public", "False").lower() == "true"
+
             new_workspace.save()
 
-
             # 2. Procesar archivos si existen
-            # Procesar archivos si existen
             if 'archivos' in request.FILES:
-                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(new_workspace.id)))
+                fs = FileSystemStorage(
+                    location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(new_workspace.id)))
                 os.makedirs(fs.location, exist_ok=True)
 
-                text_splitter = RecursiveCharacterTextSplitter(
-                    chunk_size=1000,
-                    chunk_overlap=200,
-                    length_function=len
-                )                
-                
+                files_processed = 0
+
                 for uploaded_file in request.FILES.getlist('archivos'):
                     # Guardar el archivo físicamente
-                    print(uploaded_file)
+                    print(f"Procesando archivo: {uploaded_file.name}")
                     filename = fs.save(uploaded_file.name, uploaded_file)
 
-                    
-                    
-                    #Guardar info en la base de datos
-                    upload_file= Files()
+                    # Guardar info en la base de datos
+                    upload_file = Files()
                     upload_file.document_type = uploaded_file.content_type
                     upload_file.user_id = user_id
                     upload_file.filename = filename
                     upload_file.path = os.path.join('uploads/proyectos', str(new_workspace.id), filename)
-                    upload_file.workspace =new_workspace
+                    upload_file.workspace = new_workspace
                     upload_file.save()
+
                     archivo_id = upload_file.id
-                    print(archivo_id)
+                    print(f"Archivo guardado con ID: {archivo_id}")
 
-                    #extraer texto
+                    # Extraer texto
                     extracted_text = extract_text_from_file(uploaded_file)
+                    print(f"Texto extraído: {len(extracted_text)} caracteres")
 
-                    # Detectar idioma
-                    language = embedder.detect_language(extracted_text)
+                    # Usar el nuevo método de embedding inteligente
+                    chunks, embeddings, metadata = embedder.embed_document_smart(
+                        text=extracted_text,
+                        filename=uploaded_file.name
+                    )
 
-                    # Dividir texto en chunks
-                    chunks = text_splitter.split_text(extracted_text)   
+                    if not chunks or not embeddings:
+                        print(f"Error: No se pudieron generar chunks/embeddings para {uploaded_file.name}")
+                        continue
 
-                    # Generar embeddings por lotes (batch) para mejor rendimiento
-                    embeddings = embedder.embed_texts(chunks)    
+                    print(f"Generados {len(chunks)} chunks con embeddings para {uploaded_file.name}")
 
-                    # Guardar chunks con embeddings
-                    DocumentEmbedding.objects.bulk_create([
-                        DocumentEmbedding(
-                            file=upload_file,
-                            chunk_index=idx,
-                            text=chunk,
-                            embedding=embedding,
-                            language=language,
-                            metadata={
-                                "source": uploaded_file.name,
-                                "content_type": uploaded_file.content_type,
-                                "chunk_size": len(chunk)
-                            }
+                    # Guardar chunks con embeddings usando bulk_create optimizado
+                    embedding_objects = []
+                    for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
+                        embedding_objects.append(
+                            DocumentEmbedding(
+                                file=upload_file,
+                                chunk_index=idx,
+                                text=chunk,
+                                embedding=embedding,
+                                language=metadata.get('language', 'es'),
+                                metadata={
+                                    "source": uploaded_file.name,
+                                    "content_type": uploaded_file.content_type,
+                                    "chunk_size": len(chunk),
+                                    "avg_chunk_size": metadata.get('avg_chunk_size', 0),
+                                    "total_chunks": len(chunks),
+                                    "file_size": len(extracted_text)
+                                }
+                            )
                         )
-                        for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
-                    ])
-                    
-                    upload_file.processed = True
-                    #upload_file.size = os.path.getsize(filename)
-                    upload_file.language = language
-                    upload_file.save()                                                     
 
-                    
+                    # Insertar en lotes para mejor rendimiento
+                    batch_size = 100
+                    for i in range(0, len(embedding_objects), batch_size):
+                        batch = embedding_objects[i:i + batch_size]
+                        DocumentEmbedding.objects.bulk_create(batch)
+                        print(
+                            f"Insertado lote {i // batch_size + 1}/{(len(embedding_objects) + batch_size - 1) // batch_size}")
+
+                    # Actualizar archivo como procesado
+                    upload_file.processed = True
+                    upload_file.language = metadata.get('language', 'es')
+                    upload_file.save()
+
                     answer["uploaded_files"].append({
                         "name": uploaded_file.name,
                         "type": uploaded_file.content_type,
                         "size": uploaded_file.size,
-                        "path": filename
+                        "path": filename,
+                        "language": metadata.get('language', 'es'),
+                        "chunks_generated": len(chunks),
+                        "avg_chunk_size": metadata.get('avg_chunk_size', 0)
                     })
-                
+
+                    files_processed += 1
+
                 answer["files_uploaded"] = True
-            
+
+                # Limpiar cache si se procesaron múltiples archivos
+                if files_processed > 2:
+                    cache_cleaned = embedder.cleanup_cache()
+                    if cache_cleaned:
+                        print(f"[INFO] Cache limpiado después de procesar {files_processed} archivos")
+
+                # Mostrar estadísticas del cache
+                cache_stats = embedder.get_cache_stats()
+                print(f"Cache stats: {cache_stats}")
+
             answer["id"] = new_workspace.id
             answer["saved"] = True
 
         return JsonResponse(answer, status=200)
-    
+
     except Exception as e:
-        print("Error al guardar: ",str(e))
+        print("Error al guardar: ", str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-        # Limpieza en caso de error
-"""         if 'new_workspace' in locals() and new_workspace.id:
-            try:
-                import shutil
-                workspace_dir = os.path.join(settings.MEDIA_ROOT, 'workspaces', str(new_workspace.id))
-                if os.path.exists(workspace_dir):
-                    shutil.rmtree(workspace_dir)
-            except Exception as cleanup_error:
-                print(f"Error durante limpieza: {cleanup_error}")
-        
+
+# También agregar endpoint para monitorear el cache
+@api_view(['GET'])
+def cache_status(request):
+    """Endpoint para verificar estado del cache de embeddings"""
+    try:
+        cache_stats = embedder.get_cache_stats()
+
+        status = {
+            'healthy': True,
+            'memory_usage_mb': cache_stats['memory_usage_mb'],
+            'cached_embeddings': cache_stats['cached_embeddings'],
+            'warnings': [],
+            'should_cleanup': embedder.should_cleanup_cache()
+        }
+
+        if cache_stats['memory_usage_mb'] > 100:
+            status['healthy'] = False
+            status['warnings'].append('Cache usando mucha memoria')
+
+        if cache_stats['cached_embeddings'] > 1000:
+            status['warnings'].append('Muchos embeddings en cache')
+
+        return JsonResponse(status)
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@api_view(['POST'])
+def force_cache_cleanup(request):
+    """Endpoint para forzar limpieza del cache"""
+    try:
+        cache_stats_before = embedder.get_cache_stats()
+        embedder.clear_cache()
+
         return JsonResponse({
-            "status": "error",
-            "message": str(e),
-            "trace": traceback.format_exc() if settings.DEBUG else None
-        }, status=400) """
+            "success": True,
+            "message": "Cache limpiado exitosamente",
+            "stats_before": cache_stats_before,
+            "stats_after": embedder.get_cache_stats()
+        })
+
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 @api_view(["GET", "POST"])
 @csrf_exempt
@@ -544,3 +598,49 @@ def embeddingFile(archivo_id,file,context_id,user_id,document_type):
 
     except Exception as e:
         return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)
+
+
+def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[DocumentEmbedding]:
+    """
+    Búsqueda RAG optimizada con mejor ranking y filtrado
+    """
+    # Generar embedding de la consulta
+    query_embedding = embedder.embed_query(query)
+
+    if query_embedding is None:
+        return []
+
+    # Detectar idioma de la consulta
+    query_language = embedder.detect_language(query)
+
+    # Buscar chunks relevantes con filtros mejorados
+    relevant_chunks = DocumentEmbedding.objects.filter(
+        file__contexts__id=context_id
+    ).annotate(
+        similarity=1 - L2Distance('embedding', query_embedding)
+    )
+
+    # Filtrar por idioma si coincide
+    if query_language in ['es', 'en', 'fr']:
+        language_chunks = relevant_chunks.filter(language=query_language)
+        if language_chunks.exists():
+            relevant_chunks = language_chunks
+
+    # Obtener top chunks ordenados por similitud
+    top_chunks = relevant_chunks.order_by('-similarity')[:top_k]
+
+    # Filtrar chunks con similitud muy baja (umbral mínimo)
+    filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
+
+    print(f"RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
+
+    return filtered_chunks[:min(20, len(filtered_chunks))]  # Limitar a 20 mejores resultados
+
+
+# Función auxiliar para limpiar cache periódicamente
+def cleanup_embedding_cache():
+    """Limpia el cache de embeddings si está muy grande"""
+    cache_stats = embedder.get_cache_stats()
+    if cache_stats['memory_usage_mb'] > 100:  # Si usa más de 100MB
+        embedder.clear_cache()
+        print("Cache de embeddings limpiado por uso excesivo de memoria")
