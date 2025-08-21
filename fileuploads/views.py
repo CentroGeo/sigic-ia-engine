@@ -17,6 +17,7 @@ import requests
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 import uuid
+import time
 #import textract
 #import magic
 
