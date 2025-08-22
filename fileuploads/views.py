@@ -164,6 +164,37 @@ def edit_admin_workspaces(request, workspace_id):
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
 
+
+@api_view(["GET", "POST"])
+@csrf_exempt
+def register_admin_workspaces(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    
+    answer = {
+        "success": False,
+        "workspace": None,
+        "files": []
+    }
+    
+    try:
+        with transaction.atomic():
+            get_workspace            = Workspace.objects.get(id=workspace_id)            
+            files                    = list(Files.objects.filter(workspace__id=workspace_id).values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+            
+            answer["workspace"] = {
+                "title": get_workspace.title,
+                "description": get_workspace.description,
+                "public": get_workspace.public
+            }
+            answer["files"] = files
+            answer["success"] = True
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
 @api_view(["DELETE"])
 @csrf_exempt
 def delete_admin_workspaces(request, workspace_id):
@@ -372,6 +403,35 @@ def edit_admin_workspaces_contexts(request, context_id):
         return JsonResponse(answer, status=200)    
     except Exception as e:
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+@api_view(["GET", "POST"])
+@csrf_exempt
+def register_admin_workspaces_contexts(request, context_id):
+    user_id = request.GET.get("user_id")
+    
+    answer = {
+        "success": False,
+        "context": None,
+        "files": []
+    }
+    
+    try:
+        with transaction.atomic():
+            get_context            = Context.objects.get(id=context_id)            
+            
+            answer["context"] = {
+                "title": get_context.title,
+                "description": get_context.description,
+                "public": get_context.public
+            }
+            
+            answer["files"] = list(get_context.files.values_list('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
 
 @api_view(["DELETE"])
 @csrf_exempt
