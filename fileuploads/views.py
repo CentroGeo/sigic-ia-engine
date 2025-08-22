@@ -9,7 +9,7 @@ from django.core.files.storage import FileSystemStorage
 from rest_framework import status
 from django.conf import settings
 from django.db.models import Count, Q
-from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid
+from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files
 import  json 
 import os
 import shutil
@@ -18,6 +18,7 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 import uuid
 from typing import List
+import time
 #import textract
 #import magic
 
@@ -95,105 +96,9 @@ def create_admin_workspaces(request):
 
             new_workspace.save()
 
-            # 2. Procesar archivos si existen
-            if 'archivos' in request.FILES:
-                fs = FileSystemStorage(
-                    location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(new_workspace.id)))
-                os.makedirs(fs.location, exist_ok=True)
-
-                files_processed = 0
-
-                for uploaded_file in request.FILES.getlist('archivos'):
-                    # Guardar el archivo físicamente
-                    print(f"Procesando archivo: {uploaded_file.name}")
-                    filename = fs.save(uploaded_file.name, uploaded_file)
-
-                    # Guardar info en la base de datos
-                    upload_file = Files()
-                    upload_file.document_type = uploaded_file.content_type
-                    upload_file.user_id = user_id
-                    upload_file.filename = filename
-                    upload_file.path = os.path.join('uploads/proyectos', str(new_workspace.id), filename)
-                    upload_file.workspace = new_workspace
-                    upload_file.save()
-
-                    archivo_id = upload_file.id
-                    print(f"Archivo guardado con ID: {archivo_id}")
-
-                    # Extraer texto
-                    extracted_text = extract_text_from_file(uploaded_file)
-                    print(f"Texto extraído: {len(extracted_text)} caracteres")
-
-                    # Usar el nuevo método de embedding inteligente
-                    chunks, embeddings, metadata = embedder.embed_document_smart(
-                        text=extracted_text,
-                        filename=uploaded_file.name
-                    )
-
-                    if not chunks or not embeddings:
-                        print(f"Error: No se pudieron generar chunks/embeddings para {uploaded_file.name}")
-                        continue
-
-                    print(f"Generados {len(chunks)} chunks con embeddings para {uploaded_file.name}")
-
-                    # Guardar chunks con embeddings usando bulk_create optimizado
-                    embedding_objects = []
-                    for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings)):
-                        embedding_objects.append(
-                            DocumentEmbedding(
-                                file=upload_file,
-                                chunk_index=idx,
-                                text=chunk,
-                                embedding=embedding,
-                                language=metadata.get('language', 'es'),
-                                metadata={
-                                    "source": uploaded_file.name,
-                                    "content_type": uploaded_file.content_type,
-                                    "chunk_size": len(chunk),
-                                    "avg_chunk_size": metadata.get('avg_chunk_size', 0),
-                                    "total_chunks": len(chunks),
-                                    "file_size": len(extracted_text)
-                                }
-                            )
-                        )
-
-                    # Insertar en lotes para mejor rendimiento
-                    batch_size = 100
-                    for i in range(0, len(embedding_objects), batch_size):
-                        batch = embedding_objects[i:i + batch_size]
-                        DocumentEmbedding.objects.bulk_create(batch)
-                        print(
-                            f"Insertado lote {i // batch_size + 1}/{(len(embedding_objects) + batch_size - 1) // batch_size}")
-
-                    # Actualizar archivo como procesado
-                    upload_file.processed = True
-                    upload_file.language = metadata.get('language', 'es')
-                    upload_file.save()
-
-                    answer["uploaded_files"].append({
-                        "name": uploaded_file.name,
-                        "type": uploaded_file.content_type,
-                        "size": uploaded_file.size,
-                        "path": filename,
-                        "language": metadata.get('language', 'es'),
-                        "chunks_generated": len(chunks),
-                        "avg_chunk_size": metadata.get('avg_chunk_size', 0)
-                    })
-
-                    files_processed += 1
-
-                answer["files_uploaded"] = True
-
-                # Limpiar cache si se procesaron múltiples archivos
-                if files_processed > 2:
-                    cache_cleaned = embedder.cleanup_cache()
-                    if cache_cleaned:
-                        print(f"[INFO] Cache limpiado después de procesar {files_processed} archivos")
-
-                # Mostrar estadísticas del cache
-                cache_stats = embedder.get_cache_stats()
-                print(f"Cache stats: {cache_stats}")
-
+            # Procesar archivos si existen
+            answer["uploaded_files"] = process_files(request, new_workspace, user_id)
+            answer["files_uploaded"] = True
             answer["id"] = new_workspace.id
             answer["saved"] = True
 
@@ -254,60 +159,88 @@ def force_cache_cleanup(request):
 def edit_admin_workspaces(request, workspace_id):
     user_id = request.GET.get("user_id")
     workspace_data = request.POST.copy()
+    
     answer = {
         "id": None,
-        "saved": False
+        "saved": False,
+        "files_uploaded": False,
+        "uploaded_files": []
     }
-    
-    file = request.FILES.get('file', None)
-    if file:
-        filename = file.name
-        file_extension = filename.split('.')[-1].lower()
-        
-        if file_extension not in ['jpg', 'jpeg', 'png']:
-            return JsonResponse(
-                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
-                status=400
-            )
     
     try:
         with transaction.atomic():
+            workspace_data = request.POST
             
             get_workspace               = Workspace.objects.get(id=workspace_id)
             get_workspace.user_id       = user_id
             get_workspace.title         = workspace_data.get("title")
             get_workspace.description   = workspace_data.get("description")
-            get_workspace.public        = workspace_data.get("public")
-            
-            if file:   
-                get_workspace.image_type = file_extension
-                
+            get_workspace.public        = workspace_data.get("public", "False").lower() == "true"
             get_workspace.save()
             
-            if file:   
-                try:
-                    # Crear el directorio si no existe
-                    upload_dir = "uploaded_images"
-                    if not os.path.exists(upload_dir):
-                        os.makedirs(upload_dir)
-
-                    workspaces_dir = os.path.join(upload_dir, "workspaces")
-                    if not os.path.exists(workspaces_dir):
-                        os.makedirs(workspaces_dir)
-                    
-                    # Guardar la imagen en el directorio
-                    file_path = os.path.join(workspaces_dir, '{}.{}'.format(workspace_id, file_extension))
-                    with open(file_path, "wb") as f:
-                        shutil.copyfileobj(file.file, f)
-                except:
-                    l = 0
-                    
-            answer["id"] = get_workspace.id
+            Files.objects.filter(id__in=workspace_data.getlist('delete_files[]')).delete()
+            answer["uploaded_files"] = process_files(request, get_workspace, user_id)
+            answer["files_uploaded"] = True
+            
+            answer["id"] = workspace_id
             answer["saved"] = True
+
         return JsonResponse(answer, status=200)
+    
     except Exception as e:
+        print("Error al guardar: ",str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
+
+
+@api_view(["GET", "POST"])
+@csrf_exempt
+def register_admin_workspaces(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    
+    answer = {
+        "success": False,
+        "workspace": None,
+        "files": []
+    }
+    
+    try:
+        with transaction.atomic():
+            get_workspace            = Workspace.objects.get(id=workspace_id)            
+            files                    = list(Files.objects.filter(workspace__id=workspace_id).values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+            
+            answer["workspace"] = {
+                "title": get_workspace.title,
+                "description": get_workspace.description,
+                "public": get_workspace.public
+            }
+            answer["files"] = files
+            answer["success"] = True
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
+@api_view(["DELETE"])
+@csrf_exempt
+def delete_admin_workspaces(request, workspace_id):
+    user_id = request.GET.get("user_id")
+    answer = {
+        "saved": False,
+    }
+    
+    try:
+        with transaction.atomic():
+            Workspace.objects.filter(id=workspace_id).delete()
+            answer["saved"] = True
+
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
 
 """
@@ -442,54 +375,112 @@ def edit_admin_workspaces_contexts(request, context_id):
         "saved": False
     }
     
-    file = request.FILES.get('file', None)
-    if file:
-        filename = file.name
-        file_extension = filename.split('.')[-1].lower()
-        
-        if file_extension not in ['jpg', 'jpeg', 'png']:
-            return JsonResponse(
-                {"error": "El archivo debe ser una imagen (jpg, jpeg, png)"},
-                status=400
-            )
+    fuentes_raw = context_data.get("fuentes")  # ← es un string tipo "[3,4,5]"
+    fuentes_delete = context_data.get("fuentes_elimnadas")
     
     try:
         with transaction.atomic():
             get_context               = Context.objects.get(id=context_id)
-            get_context.user_id       = user_id
-            get_context.title         = context_data.get("title")
-            get_context.description   = context_data.get("description")
-            get_context.public        = context_data.get("public")
+            get_context.title         = context_data.get("nombre")
+            get_context.description   = context_data.get("descripcion")
             
-            if file:   
-                get_context.image_type = file_extension
-                
-            get_context.save()
-            
-            if file:   
+            if fuentes_raw: #fuentes seleccionadas
                 try:
-                    # Crear el directorio si no existe
-                    upload_dir = "uploaded_images"
-                    if not os.path.exists(upload_dir):
-                        os.makedirs(upload_dir)
+                    fuentes_ids = json.loads(fuentes_raw)  # ← ahora es una lista [3, 4, 5]
 
-                    contexts_dir = os.path.join(upload_dir, "contexts")
-                    if not os.path.exists(contexts_dir):
-                        os.makedirs(contexts_dir)
-                    
-                    # Guardar la imagen en el directorio
-                    file_path = os.path.join(contexts_dir, '{}.{}'.format(context_id, file_extension))
-                    with open(file_path, "wb") as f:
-                        shutil.copyfileobj(file.file, f)
-                except:
-                    l = 0
-                    
-            answer["id"] = get_context.id
+                    if isinstance(fuentes_ids, list):
+                        existing_files = Files.objects.filter(id__in=fuentes_ids)
+
+                        for file_instance in existing_files:
+                            get_context.files.add(file_instance)
+
+                except json.JSONDecodeError as e:
+                    print("Error al parsear fuentes:", e)            
+            
+            if fuentes_delete: #fuentes seleccionadas
+                for file_instance in fuentes_delete:
+                    get_context.files.remove(file_instance)
+            
+            if 'file' in request.FILES:  #archivo de portada (imagen)
+                print("File!!!")
+                uploaded_file = request.FILES['file']
+                
+                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(new_context.id)))
+                os.makedirs(fs.location, exist_ok=True)
+
+                # Guardar el archivo físicamente
+                filename = fs.save(uploaded_file.name, uploaded_file)
+                file_path = os.path.join('uploads/contextos', str(context_id), filename)
+
+                # Guardar info en la base de datos
+                get_context.image_type  = file_path
+                get_context.save()
+
+                # Agregar detalles del archivo subido a la respuesta
+                answer["uploaded_file"] = {
+                    "name": uploaded_file.name,
+                    "type": uploaded_file.content_type,
+                    "size": uploaded_file.size,
+                    "path": filename
+                }
+                   
+            
+            answer["id"] = context_id
             answer["saved"] = True
         
         return JsonResponse(answer, status=200)    
     except Exception as e:
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+@api_view(["GET", "POST"])
+@csrf_exempt
+def register_admin_workspaces_contexts(request, context_id):
+    user_id = request.GET.get("user_id")
+    
+    answer = {
+        "success": False,
+        "context": None,
+        "files": []
+    }
+    
+    try:
+        with transaction.atomic():
+            get_context            = Context.objects.get(id=context_id)            
+            
+            answer["context"] = {
+                "title": get_context.title,
+                "description": get_context.description,
+                "public": get_context.public
+            }
+            
+            answer["files"] = list(get_context.files.values_list('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
+@api_view(["DELETE"])
+@csrf_exempt
+def delete_admin_workspaces_contexts(request, context_id):
+    user_id = request.GET.get("user_id")
+    answer = {
+        "saved": False,
+    }
+    
+    try:
+        with transaction.atomic():
+            Context.objects.filter(id=context_id).delete()
+            answer["saved"] = True
+
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
 
 """
     Secciones de apis para files
