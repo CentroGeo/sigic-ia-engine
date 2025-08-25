@@ -425,7 +425,7 @@ def register_admin_workspaces_contexts(request, context_id):
                 "public": get_context.public
             }
             
-            answer["files"] = list(get_context.files.values_list('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+            answer["files"] = list(get_context.files.values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
         return JsonResponse(answer, status=200)
     
     except Exception as e:
