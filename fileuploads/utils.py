@@ -102,8 +102,7 @@ def process_files(request, workspace, user_id):
             length_function=len
         )                
         
-        token = 'Bearer ' + request.POST.get("token")
-        #token = 'Bearer ' + 'eyJhbGciOiJSUzI1NiIsInR5cCIgOiAiSldUIiwia2lkIiA6ICJUZ1MxMG9adEhzcU12NDIwWG51ZGVXdFpsZ3pMSmRvUUNGRmpNSW5FdllJIn0.eyJleHAiOjE3NTU4MDU2MTQsImlhdCI6MTc1NTgwNTMxNCwiYXV0aF90aW1lIjoxNzU1ODA0NTA3LCJqdGkiOiJvbnJ0YWM6Zjg3ZmI1YTMtOWRkNi1hN2E1LTU4MTUtNmY3NDVkMmNkZDU4IiwiaXNzIjoiaHR0cHM6Ly9pYW0uZGV2Lmdlb2ludC5teC9yZWFsbXMvc2lnaWMiLCJhdWQiOiJhY2NvdW50Iiwic3ViIjoiNDcwNTA3NGQtMjkwYi00NjMwLWEwOTktNDIzN2EwZDQwMTFmIiwidHlwIjoiQmVhcmVyIiwiYXpwIjoic2lnaWMtbnV4dC1kZXYiLCJzaWQiOiJlYjI2Y2NiNS02ZjBmLTQyNDYtYjk1ZC00OGVjMDUyYjAwN2YiLCJhY3IiOiIwIiwiYWxsb3dlZC1vcmlnaW5zIjpbImh0dHA6Ly9sb2NhbGhvc3Q6MzAwMCIsImh0dHBzOi8vc2lnaWMuZGV2Lmdlb2ludC5teCJdLCJyZWFsbV9hY2Nlc3MiOnsicm9sZXMiOlsib2ZmbGluZV9hY2Nlc3MiLCJ1bWFfYXV0aG9yaXphdGlvbiIsImRlZmF1bHQtcm9sZXMtc2lnaWMiXX0sInJlc291cmNlX2FjY2VzcyI6eyJhY2NvdW50Ijp7InJvbGVzIjpbIm1hbmFnZS1hY2NvdW50IiwibWFuYWdlLWFjY291bnQtbGlua3MiLCJ2aWV3LXByb2ZpbGUiXX19LCJzY29wZSI6Im9wZW5pZCBlbWFpbCBwcm9maWxlIiwiZW1haWxfdmVyaWZpZWQiOnRydWUsIm5hbWUiOiJGZXJuYW5kbyBWYWxsZSIsInByZWZlcnJlZF91c2VybmFtZSI6ImZlcnZhbGxlIiwiZ2l2ZW5fbmFtZSI6IkZlcm5hbmRvIiwibG9jYWxlIjoiZXMiLCJmYW1pbHlfbmFtZSI6IlZhbGxlIiwiZW1haWwiOiJwc3AuZnZhbGxlQGNlbnRyb2dlby5lZHUubXgifQ.koeGz60zoV0sFFefJJUhU7yXbJEeX3lLRpy_2Zh1zZ50eS96PdG6aH3WOfiFWRiZeX2nOZricTzvMCCiANOrGdYWJd3L8YlizlA3-abBTRRF_Wz8TCjDEIUPZlBCWE-2a_GlaM0JRgmxmB348ddv3dYPRTA651esroLczZd8vBIpEsTQ8WFfEIS2-Nn1NGUIjoeoZvIuEG7xfiSxcUHvChRDZPbB-SRdn4NdBYKcTUWcpdg6ESglnH8PWpg--eciVlqEVPj5f7k2FoFXzj3Naym_uc8tDwrrSGa6DJ3sgXtJ-VfUFXK3xUMYi4O-JfR72Rs0NUWcK04ye31wC9eRqA'
+        #token = 'Bearer ' + request.POST.get("token")
         cookie = request.headers.get("Cookie")
         type = request.POST.get("type", "archivos cargados")
         
@@ -113,9 +112,9 @@ def process_files(request, workspace, user_id):
 
             # Guardar el archivo geonode
             #try:
-            geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
-            geo_response.raise_for_status()
-            geo_data = geo_response.json()
+            #geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
+            #geo_response.raise_for_status()
+            #geo_data = geo_response.json()
             # document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
             #except Exception as e:
             #    print(f"Upload failed: {str(e)}")
