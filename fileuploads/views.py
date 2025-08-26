@@ -398,14 +398,25 @@ def edit_admin_workspaces_contexts(request, context_id):
                     print("Error al parsear fuentes:", e)            
             
             if fuentes_delete: #fuentes seleccionadas
-                for file_instance in fuentes_delete:
-                    get_context.files.remove(file_instance)
+                try:
+                    fuentes_ids = json.loads(fuentes_delete)  # ← ahora es una lista [3, 4, 5]
+
+                    if isinstance(fuentes_ids, list):
+                        existing_files = Files.objects.filter(id__in=fuentes_ids)
+
+                        for file_instance in existing_files:
+                            get_context.files.remove(file_instance)
+            
+
+                except json.JSONDecodeError as e:
+                    print("Error al parsear fuentes:", e)            
+            
             
             if 'file' in request.FILES:  #archivo de portada (imagen)
                 print("File!!!")
                 uploaded_file = request.FILES['file']
                 
-                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(new_context.id)))
+                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(get_context.id)))
                 os.makedirs(fs.location, exist_ok=True)
 
                 # Guardar el archivo físicamente
@@ -414,7 +425,6 @@ def edit_admin_workspaces_contexts(request, context_id):
 
                 # Guardar info en la base de datos
                 get_context.image_type  = file_path
-                get_context.save()
 
                 # Agregar detalles del archivo subido a la respuesta
                 answer["uploaded_file"] = {
@@ -424,6 +434,8 @@ def edit_admin_workspaces_contexts(request, context_id):
                     "path": filename
                 }
                    
+            
+            get_context.save()
             
             answer["id"] = context_id
             answer["saved"] = True
