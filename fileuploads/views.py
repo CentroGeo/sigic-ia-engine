@@ -647,3 +647,30 @@ def cleanup_embedding_cache():
     if cache_stats['memory_usage_mb'] > 100:  # Si usa más de 100MB
         embedder.clear_cache()
         print("Cache de embeddings limpiado por uso excesivo de memoria")
+
+
+# =============================
+# ANALIZAR ARCHIVOS (SUBIR ARCHIVO DESDE POST)
+# =============================
+
+from .document_analyzer import analizar_archivo_django
+
+# Para analizar un archivo subido en Django
+def desde_post(request):
+    if request.method == 'POST' and request.FILES:
+        uploaded_file = request.FILES['archivo']
+        prompt = request.POST.get('prompt', '')
+        
+        analisis = analizar_archivo_django(uploaded_file, uploaded_file.name, prompt)
+
+        print(f"Tipo: {analisis['tipo']}")
+        print(f"Recomendación: {analisis['recomendacion']}")
+        
+# =============================
+# ANALIZAR ARCHIVOS (YA GUARDADOS)
+# =============================
+
+from .document_analyzer import  analizar_documento_completo
+
+resultado = analizar_documento_completo("/ruta/al/archivo.pdf", "prompt opcional")
+print(resultado)

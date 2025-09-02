@@ -1,0 +1,28 @@
+name: docAI
+channels:
+  - conda-forge
+dependencies:
+  - python=3.11
+  - pip
+  - scikit-learn
+  - pandas
+  - numpy
+  - pytesseract
+  - pdfplumber
+  - pypdf2
+  - openpyxl
+  - python-docx
+  - pillow
+  - lxml
+  - shapely
+  - imageio
+  - scikit-image
+  - wordcloud
+  - pip:
+      - easyocr
+      - pdfminer.six
+      - pdf2image
+      - torch
+      - torchvision
+      - torchaudio
+
