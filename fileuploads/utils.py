@@ -102,7 +102,7 @@ def process_files(request, workspace, user_id):
             length_function=len
         )                
         
-        #token = 'Bearer ' + request.POST.get("token")
+        token = request.headers.get("Authorization")
         cookie = request.headers.get("Cookie")
         type = request.POST.get("type", "archivos cargados")
         
@@ -112,10 +112,10 @@ def process_files(request, workspace, user_id):
 
             # Guardar el archivo geonode
             #try:
-            #geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
-            #geo_response.raise_for_status()
-            #geo_data = geo_response.json()
-            # document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
+            geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
+            geo_response.raise_for_status()
+            geo_data = geo_response.json()
+            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
             #except Exception as e:
             #    print(f"Upload failed: {str(e)}")
 
