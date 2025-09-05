@@ -48,32 +48,35 @@ def vectorize_and_store_text(text, file_id):
         embedding=vector
     )
 
-def upload_file_to_geonode(file, token, cookie=None, title="Sin título"):
+def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"):
         files = {
-            "doc_file": (file.name, file, file.content_type)
+            "doc_file": (
+                file.name,
+                file,
+                getattr(file, "content_type", "application/octet-stream"),
+            ),
         }
         data = {
             "title": title
         }
         headers = {
-            "Authorization": token
+            "Authorization": authorization,
+            "Accept": "application/json"
         }
-        # if cookie:
-        #     headers["Cookie"] = cookie
+
         geonode_base_url = os.environ.get("GEONODE_SERVER")
         upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
 
-        time.sleep(1)
+        # time.sleep(1)
 
         response = requests.post(
             upload_url,
-            files=files,
             data=data,
-            headers=headers,
-            timeout=30
+            files=files,
+            headers=headers
         )
-        return  response
-        return "ok"
+        print("GeoNode upload response:", response.status_code, response.text)
+        return response
 
 def get_geonode_document_uuid(doc_url):
     """
