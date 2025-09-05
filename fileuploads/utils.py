@@ -126,7 +126,7 @@ def process_files(request, workspace, user_id):
             geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
             geo_response.raise_for_status()
             geo_data = geo_response.json()
-            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
+            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), token)
             #except Exception as e:
             #    print(f"Upload failed: {str(e)}")
 
