@@ -64,7 +64,7 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
             "Accept": "application/json"
         }
 
-        geonode_base_url = os.environ.get("GEONODE_SERVER")
+        geonode_base_url = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx")
         upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
 
         # time.sleep(1)
