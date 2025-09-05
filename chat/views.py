@@ -58,12 +58,12 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
         top_chunks = list(relevant_chunks.order_by('-similarity')[:top_k])
 
         # Filtrar chunks con similitud muy baja (umbral mínimo)
-        filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
+        # filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
 
-        print(f"[DEBUG] RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
-        print(f"[DEBUG] Similitudes: {[round(chunk.similarity, 3) for chunk in filtered_chunks[:5]]}")
+        # print(f"[DEBUG] RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
+        # print(f"[DEBUG] Similitudes: {[round(chunk.similarity, 3) for chunk in filtered_chunks[:5]]}")
 
-        return filtered_chunks[:min(20, len(filtered_chunks))]  # Limitar a 20 mejores resultados
+        return top_chunks[:min(20, len(top_chunks))]  # Limitar a 20 mejores resultados
 
     except Exception as e:
         print(f"[ERROR] Error en optimized_rag_search: {str(e)}")
