@@ -9,7 +9,7 @@ from django.core.files.storage import FileSystemStorage
 from rest_framework import status
 from django.conf import settings
 from django.db.models import Count, Q
-from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files
+from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files, upload_image_to_geonode
 import  json 
 import os
 import shutil
@@ -326,34 +326,23 @@ def create_admin_workspaces_contexts(request):
             
 
             if 'file' in request.FILES:  #archivo de portada (imagen)
-                print("File!!!")
                 uploaded_file = request.FILES['file']
                 
-                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(new_context.id)))
-                os.makedirs(fs.location, exist_ok=True)
-
-                # Guardar el archivo físicamente
-                filename = fs.save(uploaded_file.name, uploaded_file)
-                file_path = os.path.join('uploads/contextos', str(new_context.id), filename)
-
-                # Guardar info en la base de datos
-                new_context.image_type  = file_path
+                ext = uploaded_file.name.split('.')[-1].lower()
+                contexto_id = str(new_context.id)
+                new_filename = f"{contexto_id}.{ext}"
+                
+                upload_image_to_geonode(request.FILES.get("file"), new_filename)                 
+                
+                new_context.image_type  = new_filename
                 new_context.save()
-
-                #upload_file = Files()
-                #upload_file.document_type = uploaded_file.content_type
-                #upload_file.user_id = user_id
-                #upload_file.filename = filename
-                #upload_file.path = os.path.join('uploads/contextos', str(new_context.id), filename)
-                #upload_file.context = new_context
-                #upload_file.save()
 
                 # Agregar detalles del archivo subido a la respuesta
                 answer["uploaded_file"] = {
                     "name": uploaded_file.name,
                     "type": uploaded_file.content_type,
                     "size": uploaded_file.size,
-                    "path": filename
+                    "path": new_filename
                 }
                    
             
@@ -413,25 +402,23 @@ def edit_admin_workspaces_contexts(request, context_id):
             
             
             if 'file' in request.FILES:  #archivo de portada (imagen)
-                print("File!!!")
                 uploaded_file = request.FILES['file']
                 
-                fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/contextos', str(get_context.id)))
-                os.makedirs(fs.location, exist_ok=True)
-
-                # Guardar el archivo físicamente
-                filename = fs.save(uploaded_file.name, uploaded_file)
-                file_path = os.path.join('uploads/contextos', str(context_id), filename)
-
+                ext = uploaded_file.name.split('.')[-1].lower()
+                contexto_id = str(get_context.id)
+                new_filename = f"{contexto_id}.{ext}"
+                upload_image_to_geonode(request.FILES.get("file"), new_filename)                 
+                
                 # Guardar info en la base de datos
-                get_context.image_type  = file_path
+                get_context.image_type  = new_filename
+                get_context.save()
 
                 # Agregar detalles del archivo subido a la respuesta
                 answer["uploaded_file"] = {
                     "name": uploaded_file.name,
                     "type": uploaded_file.content_type,
                     "size": uploaded_file.size,
-                    "path": filename
+                    "path": new_filename
                 }
                    
             
