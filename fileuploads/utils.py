@@ -6,13 +6,14 @@ from sentence_transformers import SentenceTransformer
 from .models import DocumentEmbedding, Files
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from langchain.text_splitter import RecursiveCharacterTextSplitter
-from .embeddings_service import embedder
+# from langchain.text_splitter import RecursiveCharacterTextSplitter
+# from .embeddings_service import embedder
 import io
 import requests
 import os
 import time
-from .splitters_factory import make_splitter
+# from .splitters_factory import make_splitter
+from .make_embedder import make_embedder
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -93,29 +94,25 @@ def process_files(request, workspace, user_id):
         )
         os.makedirs(fs.location, exist_ok=True)
 
-        splitter_name = request.POST.get("splitter", "recursive")
-        splitter_params = {
+        config = {
+            "splitter": request.POST.get("splitter", "recursive"),
             "chunk_size": int(request.POST.get("chunk_size", 1000)),
             "chunk_overlap": int(request.POST.get("chunk_overlap", 200)),
-            # se pueden permitir más campos  aquí
+            "batch_size": int(request.POST.get("batch_size", 5)),
+            "max_retries": int(request.POST.get("max_retries", 3)),
         }
 
-        # text_splitter = RecursiveCharacterTextSplitter(
-        #     chunk_size=1000,
-        #     chunk_overlap=200,
-        #     length_function=len
-        # )
-        try:
-            text_splitter = make_splitter(splitter_name, splitter_params)
-        except Exception as e:
-            print(f"⚠️ No se pudo crear el splitter: {e}")
-            raise
+        # Agregar si vienen parámetros extra (según el splitter usado),
+        # de momento es opcional, ya que en el módulo spliitters_factory.py
+        # actualmente se definen los separadores a usar por defecto, de acuerdo
+        # al splitter  utilizado. 
+        optional_keys = ["separator", "separators", "encoding_name", "model_name"]
+        for key in optional_keys:
+            if key in request.POST:
+                config[key] = request.POST[key]  
 
-        token = "Bearer " + request.POST.get("token")
-        # cookie = request.headers.get("Cookie")
-        # print("##### repr token:", repr(token))
-
-        
+        print("📦 Config:", config)
+        embedder = make_embedder(config)
 
         type = request.POST.get("type", "archivos cargados")
 
@@ -151,12 +148,19 @@ def process_files(request, workspace, user_id):
 
             # extraer texto
             extracted_text = extract_text_from_file(uploaded_file)
+            actual_text_length = len(extracted_text)
+            print(f"📄 Texto extraído ({uploaded_file.name}): {actual_text_length} caracteres")
 
             # Detectar idioma
             language = embedder.detect_language(extracted_text)
 
             # Dividir texto en chunks
-            chunks = text_splitter.split_text(extracted_text)
+            # chunks = text_splitter.split_text(extracted_text)
+
+            # splitter dinámico ya está dentro de embedder, dry
+            chunks = embedder.text_splitter.split_text(extracted_text)
+            n_chunks = len(chunks)
+            print(f"🧩 Chunks generados: {n_chunks}")
 
             # Generar embeddings por lotes (batch) para mejor rendimiento
             embeddings = embedder.embed_texts(chunks)
@@ -173,7 +177,12 @@ def process_files(request, workspace, user_id):
                         metadata={
                             "source": uploaded_file.name,
                             "content_type": uploaded_file.content_type,
-                            "chunk_size": len(chunk),
+                            "chunk_size": config["chunk_size"],
+                            "chunk_overlap": config["chunk_overlap"],
+                            "splitter": config["splitter"],
+                            "actual_chunk_len": len(chunk),
+                            "actual_text_length": actual_text_length,
+                            "n_chunks_generated": n_chunks,
                         },
                     )
                     for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
