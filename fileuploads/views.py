@@ -526,19 +526,19 @@ def create_admin_workspaces_contexts_files(request):
         status=400
     )
 
-    token = request.headers.get("Authorization")
+    authorization = request.headers.get("Authorization")
     cookie = request.headers.get("Cookie")
     title = request.POST.get("title", "Sin título")
 
-    if not token:
+    if not authorization:
         return JsonResponse({"error": "Authorization header missing"}, status=400)
 
     try:
-        geo_response = upload_file_to_geonode(file, token, cookie, title)
+        geo_response = upload_file_to_geonode(file, authorization, cookie, title)
         geo_response.raise_for_status()
         geo_data = geo_response.json()
         # print("Respuesta de GeoNode:", geo_data)
-        document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
+        document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), authorization)
         # print("Valor de UUID que se va a guardar:", document_uuid)
         # return JsonResponse(geo_response.json(), status=geo_response.status_code)
     except Exception as e:

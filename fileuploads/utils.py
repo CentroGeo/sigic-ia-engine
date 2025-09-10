@@ -50,31 +50,35 @@ def vectorize_and_store_text(text, file_id):
         embedding=vector
     )
 
-def upload_file_to_geonode(file, token, cookie=None, title="Sin título"):
+def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"):
         files = {
-            "doc_file": (file.name, file, file.content_type),
+            "doc_file": (
+                file.name,
+                file,
+                getattr(file, "content_type", "application/octet-stream"),
+            ),
         }
         data = {
             "title": title
         }
         headers = {
-            "Authorization": token
+            "Authorization": authorization,
+            "Accept": "application/json"
         }
-        # if cookie:
-        #     headers["Cookie"] = cookie
-        geonode_base_url = os.environ.get("GEONODE_SERVER")
+
+        geonode_base_url = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx")
         upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
 
-        time.sleep(1)
+        # time.sleep(1)
 
         response = requests.post(
             upload_url,
-            files=files,
             data=data,
-            headers=headers,
-            timeout=30
+            files=files,
+            headers=headers
         )
-        return  response
+        print("GeoNode upload response:", response.status_code, response.text)
+        return response
 
 def upload_image_to_geonode(file, filename, token=''):
     file_bytes = file.read() 
@@ -97,16 +101,23 @@ def upload_image_to_geonode(file, filename, token=''):
 
     return response
 
-
-def get_geonode_document_uuid(doc_url):
+def get_geonode_document_uuid(doc_url, authorization=None):
     """
     Se extrae el ID numérico de la URL devuelta por GeoNode al acargar el archivo y se 
     obtiene el UUID completo del documento.
     """
+    headers = {
+        "Accept": "application/json"
+    }
+    if authorization is not None:
+        headers["Authorization"] = authorization
     try:
         doc_id = doc_url.strip("/").split("/")[-1]
         geonode_base_url = os.environ.get("GEONODE_SERVER")
-        response = requests.get(f"{geonode_base_url}/api/v2/documents/{doc_id}")
+        response = requests.get(
+            f"{geonode_base_url}/api/v2/documents/{doc_id}",
+            headers=headers,
+        )
         response.raise_for_status()
         return response.json()["document"]["uuid"]
     except Exception as e:
@@ -137,7 +148,7 @@ def process_files(request, workspace, user_id):
             geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
             geo_response.raise_for_status()
             geo_data = geo_response.json()
-            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""))
+            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), token)
             #except Exception as e:
             #    print(f"Uploaduploaded_file failed: {str(e)}")
 
