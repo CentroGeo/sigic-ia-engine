@@ -35,7 +35,10 @@ def make_splitter(name: str = "recursive", params: dict = None):
         params.setdefault("separators", ["\n\n", "\n", ". ", "! ", "? ", " ", ""])
 
     elif name_lower == "token":
-        # Asegurarse de que 'tiktoken' esté disponible
+        # Asegurarse de que 'tiktoken' esté disponible,
+        # de momento para pruebas lo instalé temporalmente en el 
+        # contenedor, en caso de que usemos este splitter, tendría 
+        # que especificarse en el base.txt, archivo de librerias necesarias
         try:
             import tiktoken 
         except ImportError:
@@ -47,7 +50,7 @@ def make_splitter(name: str = "recursive", params: dict = None):
             print(error_msg)
             raise ImportError(error_msg)
 
-        # Valor por defecto para encoding_name (puedes ajustarlo si usas otro modelo)
+        # Valor por defecto para encoding_name (se puede ajustar si se usara otro modelo)
         params.setdefault("encoding_name", "cl100k_base")
 
     # Crear splitter
