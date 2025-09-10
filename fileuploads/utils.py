@@ -8,10 +8,12 @@ from django.conf import settings
 from django.core.files.storage import FileSystemStorage
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
+from requests.auth import HTTPBasicAuth
 import io
 import requests
 import os
 import time
+import base64
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -78,6 +80,27 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
         print("GeoNode upload response:", response.status_code, response.text)
         return response
 
+def upload_image_to_geonode(file, filename, token=''):
+    file_bytes = file.read() 
+    files = {"file": (filename, file_bytes, file.content_type)}
+    data = {"category": "contextos"}
+    headers = {
+        "Authorization": token
+    }
+    
+    geonode_base_url = os.environ.get("GEONODE_SERVER")
+    upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/upload"
+    
+    response = requests.post(
+        upload_url,
+        files=files,
+        data=data,
+        headers=headers,
+        timeout=30
+    )
+
+    return response
+
 def get_geonode_document_uuid(doc_url, authorization=None):
     """
     Se extrae el ID numérico de la URL devuelta por GeoNode al acargar el archivo y se 
@@ -104,9 +127,8 @@ def get_geonode_document_uuid(doc_url, authorization=None):
 def process_files(request, workspace, user_id):
     uploaded_files = []
     if 'archivos' in request.FILES:
-        fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(workspace.id)))
-        os.makedirs(fs.location, exist_ok=True)
-
+        # fs = FileSystemStorage(location=os.path.join(settings.MEDIA_ROOT, 'uploads/proyectos', str(workspace.id)))
+        # os.makedirs(fs.location, exist_ok=True)
         text_splitter = RecursiveCharacterTextSplitter(
             chunk_size=1000,
             chunk_overlap=200,
@@ -119,8 +141,8 @@ def process_files(request, workspace, user_id):
         
         for uploaded_file in request.FILES.getlist('archivos'):            
             # Guardar el archivo físicamente delete
-            filename = fs.save(uploaded_file.name, uploaded_file)
-
+            #filename = fs.save(uploaded_file.name, uploaded_file)
+            filename = uploaded_file.name
             # Guardar el archivo geonode
             #try:
             geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
@@ -128,12 +150,12 @@ def process_files(request, workspace, user_id):
             geo_data = geo_response.json()
             document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), token)
             #except Exception as e:
-            #    print(f"Upload failed: {str(e)}")
+            #    print(f"Uploaduploaded_file failed: {str(e)}")
 
             
             #Guardar info en la base de datos
             upload_file= Files()
-            #upload_file.document_id = document_uuid
+            upload_file.document_id = document_uuid
             upload_file.geonode_type = type
             upload_file.user_id = user_id
             upload_file.filename = filename
