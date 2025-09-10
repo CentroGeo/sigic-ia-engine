@@ -4,7 +4,7 @@ from langdetect import detect
 from typing import List, Tuple, Dict, Any
 import time
 import logging
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+# from langchain.text_splitter import RecursiveCharacterTextSplitter
 import re
 from django.utils import timezone
 from datetime import timedelta
@@ -18,16 +18,17 @@ class OllamaEmbedder:
         self,
         model_name="nomic-embed-text",
         host="http://host.docker.internal:11434",
-        max_chunk_size=512,  # Tamaño máximo por chunk
-        chunk_overlap=50,  # Overlap entre chunks
+        text_splitter=None,
+        # max_chunk_size=512,  # Tamaño máximo por chunk
+        # chunk_overlap=50,  # Overlap entre chunks
         batch_size=10,  # Número de chunks por batch
         max_retries=3,
     ):  # Reintentos en caso de error
         self.model_name = model_name
         self.host = host
         self.client = ollama.Client(host=host)
-        self.max_chunk_size = max_chunk_size
-        self.chunk_overlap = chunk_overlap
+        # self.max_chunk_size = max_chunk_size
+        # self.chunk_overlap = chunk_overlap
         self.batch_size = batch_size
         self.max_retries = max_retries
 
@@ -38,14 +39,8 @@ class OllamaEmbedder:
         #     length_function=len,
         #     separators=["\n\n", "\n", ". ", "! ", "? ", " ", ""],
         # )
-        self.text_splitter = make_splitter(
-            "recursive",
-            {
-                "chunk_size": max_chunk_size,
-                "chunk_overlap": chunk_overlap,
-                "length_function": len,
-            },
-        )
+        
+        self.text_splitter = text_splitter
 
         # Cache para embeddings repetidos
         self._embedding_cache = {}
@@ -373,10 +368,10 @@ class OllamaEmbedder:
         }
 
 
-# Instancia global mejorada
-embedder = OllamaEmbedder(
-    max_chunk_size=512,
-    chunk_overlap=50,
-    batch_size=5,  # Reducido para mejor estabilidad
-    max_retries=3,
-)
+# # Instancia global mejorada
+# embedder = OllamaEmbedder(
+#     max_chunk_size=512,
+#     chunk_overlap=50,
+#     batch_size=5,  # Reducido para mejor estabilidad
+#     max_retries=3,
+# )
