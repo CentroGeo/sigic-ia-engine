@@ -15,12 +15,14 @@ import os
 import shutil
 import requests
 from langchain.text_splitter import RecursiveCharacterTextSplitter
-from .embeddings_service import embedder
+# from .embeddings_service import embedder
 import uuid
 from typing import List
 import time
 #import textract
 #import magic
+from .make_embedder import make_embedder
+from .embedder_configs import EMBEDDER_CONFIGS
 
 """
     Secciones de apis para workspaces
@@ -114,6 +116,9 @@ def create_admin_workspaces(request):
 def cache_status(request):
     """Endpoint para verificar estado del cache de embeddings"""
     try:
+        config = EMBEDDER_CONFIGS["default"]
+        embedder = make_embedder(config)
+
         cache_stats = embedder.get_cache_stats()
 
         status = {
