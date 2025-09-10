@@ -319,7 +319,7 @@ def create_admin_workspaces_contexts(request):
 
                         for file_instance in existing_files:
                             new_context.files.add(file_instance)
-
+                            
                 except json.JSONDecodeError as e:
                     print("Error al parsear fuentes:", e)            
             
@@ -342,7 +342,7 @@ def create_admin_workspaces_contexts(request):
                     "name": uploaded_file.name,
                     "type": uploaded_file.content_type,
                     "size": uploaded_file.size,
-                    "path": new_filename
+                    "path": new_filename,
                 }
                    
             
@@ -449,7 +449,8 @@ def register_admin_workspaces_contexts(request, context_id):
             answer["context"] = {
                 "title": get_context.title,
                 "description": get_context.description,
-                "public": get_context.public
+                "public": get_context.public,
+                "image_type": get_context.image_type
             }
             
             answer["files"] = list(get_context.files.values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
