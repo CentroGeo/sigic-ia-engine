@@ -9,7 +9,7 @@ def user_file_path(instance, filename):
 class Workspace(models.Model):
     title           = models.TextField()
     description     = models.TextField(null=True, blank=True)
-    user_id         = models.UUIDField(null=True, blank=True)
+    user_id         = models.EmailField(null=True, blank=True)
 
     active          = models.BooleanField(default=True)
     public          = models.BooleanField(default=False)
@@ -31,7 +31,7 @@ class Context(models.Model):
     title           = models.TextField()
     description     = models.TextField(null=True, blank=True)
 
-    user_id         = models.UUIDField(null=True, blank=True)
+    user_id         = models.EmailField(null=True, blank=True)
     active          = models.BooleanField(default=True)
     public          = models.BooleanField(default=True)
     created_date    = models.DateTimeField(auto_now_add=True)
@@ -52,7 +52,7 @@ class Files(models.Model):
     document_id     = models.UUIDField(null=True, blank=True)
     geonode_type    = models.TextField(default='')
     document_type   = models.TextField()
-    user_id         = models.UUIDField(null=True, blank=True)
+    user_id         = models.EmailField(null=True, blank=True)
     filename        = models.TextField(default='')
     path            = models.TextField(default='')   
     processed       = models.BooleanField(default=False)

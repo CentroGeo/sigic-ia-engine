@@ -27,7 +27,7 @@ import time
 """
 @api_view(["GET", "POST"])
 def list_workspaces(request):
-    user_id = request.GET.get("user_id")
+    user_id = request.user
 
     list_workspaces = list(
         Workspace.objects.filter(
@@ -48,7 +48,7 @@ def list_workspaces(request):
 
 @api_view(["GET", "POST"])
 def list_admin_workspaces(request):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     list_workspaces = list(
         Workspace.objects.filter(
@@ -72,7 +72,7 @@ def list_admin_workspaces(request):
 @csrf_exempt
 def create_admin_workspaces(request):
     print("create_admin_workspaces")
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     workspace_data = request.POST.copy()
     answer = {
         "id": None,
@@ -157,7 +157,7 @@ def force_cache_cleanup(request):
 @api_view(["GET", "POST"])
 @csrf_exempt
 def edit_admin_workspaces(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     workspace_data = request.POST.copy()
     
     answer = {
@@ -196,7 +196,7 @@ def edit_admin_workspaces(request, workspace_id):
 @api_view(["GET", "POST"])
 @csrf_exempt
 def register_admin_workspaces(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     answer = {
         "success": False,
@@ -226,7 +226,7 @@ def register_admin_workspaces(request, workspace_id):
 @api_view(["DELETE"])
 @csrf_exempt
 def delete_admin_workspaces(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     answer = {
         "saved": False,
     }
@@ -248,7 +248,7 @@ def delete_admin_workspaces(request, workspace_id):
 """
 @api_view(["GET", "POST"])
 def list_workspaces_contexts(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     list_workspaces = list(Context.objects.filter(
         Q(user_id=user_id) | Q(public=True),
@@ -264,7 +264,7 @@ def list_workspaces_contexts(request, workspace_id):
 
 @api_view(["GET", "POST"])
 def list_admin_workspaces_contexts(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     list_workspaces_contexts = list(
         Context.objects.filter(
@@ -284,8 +284,7 @@ def list_admin_workspaces_contexts(request, workspace_id):
 
 @api_view(["GET", "POST"])
 def create_admin_workspaces_contexts(request):
-    print("crear contexto!!!!")
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     context_data = request.POST.copy()
     
     answer = {
@@ -293,7 +292,7 @@ def create_admin_workspaces_contexts(request):
         "saved": False
     }
     
-    print(context_data)
+    print("CONTEXT", context_data, user_id)
 
     fuentes_raw = context_data.get("fuentes")  # ← es un string tipo "[3,4,5]"
     
@@ -332,7 +331,9 @@ def create_admin_workspaces_contexts(request):
                 contexto_id = str(new_context.id)
                 new_filename = f"{contexto_id}.{ext}"
                 
-                upload_image_to_geonode(request.FILES.get("file"), new_filename)                 
+                rsp = upload_image_to_geonode(request.FILES.get("file"), new_filename)                 
+                print(rsp)
+                print(rsp.json())
                 
                 new_context.image_type  = new_filename
                 new_context.save()
@@ -356,7 +357,7 @@ def create_admin_workspaces_contexts(request):
 
 @api_view(["GET", "POST"])
 def edit_admin_workspaces_contexts(request, context_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     context_data = request.POST.copy()
     
     answer = {
@@ -434,7 +435,7 @@ def edit_admin_workspaces_contexts(request, context_id):
 @api_view(["GET", "POST"])
 @csrf_exempt
 def register_admin_workspaces_contexts(request, context_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     answer = {
         "success": False,
@@ -464,7 +465,7 @@ def register_admin_workspaces_contexts(request, context_id):
 @api_view(["DELETE"])
 @csrf_exempt
 def delete_admin_workspaces_contexts(request, context_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     answer = {
         "saved": False,
     }
@@ -488,7 +489,7 @@ def delete_admin_workspaces_contexts(request, context_id):
 
 @api_view(["GET", "POST"])
 def list_admin_workspaces_files(request, workspace_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     list_files = list(Files.objects.filter(
         workspace=workspace_id
@@ -500,7 +501,7 @@ def list_admin_workspaces_files(request, workspace_id):
 
 @api_view(["GET", "POST"])
 def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     
     list_files = list(Files.objects.filter(
         context=context_id
@@ -513,7 +514,7 @@ def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
 @api_view(["GET", "POST"])
 def create_admin_workspaces_contexts_files(request):
     allowed_extensions = ['pdf', 'txt', 'xls', 'xlsx']
-    user_id = request.GET.get("user_id")
+    user_id = request.user  
     file = request.FILES.get('file', None)
     if not file:
         return JsonResponse({"error": "No se proporcionó ningún archivo."}, status=400)
