@@ -6,4 +6,7 @@ urlpatterns = [
     path('history/generate', views.historyGenerate, name='history-generate'),
     path('history/user', views.historyUser, name='history-user'),
     path('history/getchats', views.get_chat_histories, name='history-chats'),
+    
+    path('history/title', views.historyTitle, name='history-title'),
+    path('history/remove', views.historyRemove, name='history-remove'),
 ]
