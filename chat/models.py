@@ -4,7 +4,7 @@ from fileuploads.models import Context
 # Create your models here.
 class History(models.Model):
     context       = models.ManyToManyField(Context, blank=True)
-    user_id       = models.UUIDField()
+    user_id       = models.EmailField(null=True, blank=True)
     title         = models.CharField(max_length=255, blank=True, null=True)
     chat          = models.JSONField(null=True, blank=True)
     history_array = models.JSONField(null=True, blank=True)
