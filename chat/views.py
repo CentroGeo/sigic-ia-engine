@@ -306,18 +306,24 @@ def historyUser(request):
 @api_view(['GET', 'POST'])
 @csrf_exempt
 def get_chat_histories(request):
-    user_id = request.user  
+    try:
+        user_id = request.user  
 
-    if user_id:
-        histories = History.objects.filter(user_id=user_id)
-    else:
-        histories = History.objects.all()
+        if user_id:
+            histories = History.objects.filter(user_id=user_id)
+        else:
+            histories = History.objects.all()
 
-    histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
+        if not histories.exists():
+            return JsonResponse({"error": "No se encontraron chats"}, status=404)
+        
+        histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
 
-    serializer = HistoryMiniSerializer(histories, many=True)
-    return Response(serializer.data)
-
+        serializer = HistoryMiniSerializer(histories, many=True)
+        return Response(serializer.data)
+    
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
 @api_view(['GET', 'POST'])
 @csrf_exempt
