@@ -315,7 +315,7 @@ def get_chat_histories(request):
             histories = History.objects.all()
 
         if not histories.exists():
-            return JsonResponse({"error": "No se encontraron chats"}, status=404)
+            return JsonResponse([], status=200)
         
         histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
 
