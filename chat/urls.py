@@ -8,5 +8,5 @@ urlpatterns = [
     path('history/getchats', views.get_chat_histories, name='history-chats'),
     
     path('history/title', views.historyTitle, name='history-title'),
-    path('history/remove', views.hisotryRemove, name='history-remove'),
+    path('history/remove', views.historyRemove, name='history-remove'),
 ]
