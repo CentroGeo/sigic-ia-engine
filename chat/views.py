@@ -13,6 +13,7 @@ from fileuploads.embeddings_service import embedder
 from pgvector.django import L2Distance
 from .serializers import HistoryMiniSerializer
 from .models import History
+from django.db import transaction
 import time
 import threading
 import requests
@@ -305,7 +306,7 @@ def historyUser(request):
 @api_view(['GET', 'POST'])
 @csrf_exempt
 def get_chat_histories(request):
-    user_id = request.GET.get('user_id')
+    user_id = request.user  
 
     if user_id:
         histories = History.objects.filter(user_id=user_id)
@@ -316,6 +317,50 @@ def get_chat_histories(request):
 
     serializer = HistoryMiniSerializer(histories, many=True)
     return Response(serializer.data)
+
+
+@api_view(['GET', 'POST'])
+@csrf_exempt
+def historyTitle(request):
+    try:
+        answer = {
+            "saved": False,
+        }
+        
+        if request.method == 'POST':
+            payload = request.data
+            chat_id = payload['chat_id']
+            title   = payload['title']
+            
+            get_history = History.objects.get(id=payload['chat_id'])
+            get_history.title = title
+            get_history.save()
+            answer["saved"] = True
+            return JsonResponse(answer, status=200)
+        else:
+            return JsonResponse({"error": "Metodo no permitido"}, status=405)
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@api_view(["DELETE"])
+@csrf_exempt
+def historyRemove(request, chat_id):
+    answer = {
+        "saved": False,
+    }
+    
+    try:
+        with transaction.atomic():
+            History.objects.filter(id=chat_id).delete()
+            answer["saved"] = True
+        return JsonResponse(answer, status=200)
+    
+    except Exception as e:
+        print("Error al guardar: ",str(e))
+        return JsonResponse({"status": "error", "message": str(e)}, status=400)
+
+
 
 
 def generate_chat_title(server_url: str, question: str, answer: str, model_name: str) -> str:
