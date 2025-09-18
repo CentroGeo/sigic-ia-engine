@@ -247,8 +247,8 @@ INSTRUCCIONES:
 
 # El resto de tus funciones permanecen igual...
 @api_view(['GET', 'POST'])
-@csrf_exempt
 def historyGenerate(request):
+    user_id = request.user  
     try:
         if request.method == 'POST':
             payload = request.data
@@ -259,7 +259,7 @@ def historyGenerate(request):
             if (payload['chat_id'] == 0):
                 print("[DEBUG] nuevo chat")
                 new_history = History()
-                new_history.user_id = payload['user_id']
+                new_history.user_id = user_id
                 new_history.job_id = payload['session_id']
                 new_history.job_status = "Iniciado"
                 new_history.save()
@@ -271,7 +271,7 @@ def historyGenerate(request):
             else:
                 print("[DEBUG] continuación de chat")
                 update_history = History.objects.get(id=payload['chat_id'])
-                update_history.user_id = payload['user_id']
+                update_history.user_id = user_id
                 update_history.job_id = payload['session_id']
                 update_history.job_status = "Iniciado"
                 update_history.save()
