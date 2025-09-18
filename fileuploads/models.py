@@ -49,7 +49,8 @@ class Context(models.Model):
 
 class Files(models.Model):
     workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
-    document_id     = models.UUIDField(null=True, blank=True)
+    geonode_id     = models.IntegerField(null=True, blank=True)
+    geonode_uuid   = models.UUIDField(null=True, blank=True)
     geonode_type    = models.TextField(default='')
     document_type   = models.TextField()
     user_id         = models.EmailField(null=True, blank=True)

@@ -207,7 +207,7 @@ def register_admin_workspaces(request, workspace_id):
     try:
         with transaction.atomic():
             get_workspace            = Workspace.objects.get(id=workspace_id)            
-            files                    = list(Files.objects.filter(workspace__id=workspace_id).values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+            files                    = list(Files.objects.filter(workspace__id=workspace_id).values('id', 'geonode_id', 'document_type', 'user_id', 'filename','path'))
             
             answer["workspace"] = {
                 "title": get_workspace.title,
@@ -454,7 +454,7 @@ def register_admin_workspaces_contexts(request, context_id):
                 "image_type": get_context.image_type
             }
             
-            answer["files"] = list(get_context.files.values('id', 'document_id', 'document_type', 'user_id', 'filename','path'))
+            answer["files"] = list(get_context.files.values('id', 'geonode_id', 'document_type', 'user_id', 'filename','path'))
         return JsonResponse(answer, status=200)
     
     except Exception as e:
@@ -494,7 +494,7 @@ def list_admin_workspaces_files(request, workspace_id):
     list_files = list(Files.objects.filter(
         workspace=workspace_id
     ).values(
-        'id', 'document_id', 'document_type', 'user_id', 'filename','path'
+        'id', 'geonode_id', 'document_type', 'user_id', 'filename','path'
     ))
     
     return JsonResponse(list(list_files), safe=False)
@@ -506,7 +506,7 @@ def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
     list_files = list(Files.objects.filter(
         context=context_id
     ).values(
-        'id', 'document_id', 'document_type', 'user_id'
+        'id', 'geonode_id', 'document_type', 'user_id'
     ))
     
     return JsonResponse(list(list_files), safe=False)
