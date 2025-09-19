@@ -81,5 +81,7 @@ class KeycloakAuthentication(BaseAuthentication):
         except Exception as e:
             raise AuthenticationFailed(f"Token inválido: {str(e)}")
 
+        print("DATA!!!", payload)
+        
         user = TokenUser(payload)
         return (user, None)
