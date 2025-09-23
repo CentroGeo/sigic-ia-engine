@@ -16,3 +16,12 @@ DATABASES = {
         'PORT': os.getenv('DB_PORT', '5432'),
     }
 }
+
+REST_FRAMEWORK = {
+    'DEFAULT_AUTHENTICATION_CLASSES': [
+        'shared.authentication.KeycloakAuthentication',
+    ],
+    'DEFAULT_PERMISSION_CLASSES': [
+        'rest_framework.permissions.IsAuthenticated',
+    ],
+}
