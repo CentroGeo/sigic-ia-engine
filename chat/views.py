@@ -248,10 +248,10 @@ INSTRUCCIONES:
 # El resto de tus funciones permanecen igual...
 @api_view(['GET', 'POST'])
 def historyGenerate(request):
-    user_id = request.user  
     try:
         if request.method == 'POST':
             payload = request.data
+            user_id = payload['user_id']
             response_model = {
                 "status": "ok"
             }
@@ -307,7 +307,12 @@ def historyUser(request):
 @csrf_exempt
 def get_chat_histories(request):
     try:
-        user_id = request.user  
+        if request.method == 'POST':
+            payload = request.POST.copy()
+        else:
+            payload = request.GET.copy()
+            
+        user_id = payload.get('user_id')
 
         if user_id:
             histories = History.objects.filter(user_id=user_id)
