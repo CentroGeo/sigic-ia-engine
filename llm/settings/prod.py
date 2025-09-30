@@ -25,3 +25,14 @@ DATABASES = {
 #         'rest_framework.permissions.IsAuthenticated',
 #     ],
 # }
+
+REST_FRAMEWORK = {
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+}
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'Modulo de IA',
+    'DESCRIPTION': 'Apis para la consulta y almacenamiento de documentos',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+}

@@ -16,6 +16,7 @@ import shutil
 import requests
 from langchain.text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 import uuid
 from typing import List
 import time
@@ -25,7 +26,39 @@ import time
 """
     Secciones de apis para workspaces
 """
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    parameters=[
+        OpenApiParameter(
+            name="user_id",
+            description="ID del usuario",
+            required=True,
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+        ),
+    ],
+    responses={
+        200: {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "user_id": {"type": "integer"},
+                    "active": {"type": "boolean"},
+                    "public": {"type": "boolean"},  
+                    "created_date": {"type": "string"},
+                    "image_type": {"type": "string"},
+                    "numero_fuentes": {"type": "integer"},
+                    "numero_contextos": {"type": "integer"},
+                },
+            },  
+        }
+    },
+)
+@api_view(["POST"])
 def list_workspaces(request):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -51,7 +84,39 @@ def list_workspaces(request):
     return JsonResponse(list(list_workspaces), safe=False)
 
 
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    parameters=[
+        OpenApiParameter(
+            name="user_id",
+            description="ID del usuario",
+            required=True,
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+        ),
+    ],
+    responses={
+        200: {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "id": {"type": "integer"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "user_id": {"type": "integer"},
+                    "active": {"type": "boolean"},
+                    "public": {"type": "boolean"},  
+                    "created_date": {"type": "string"},
+                    "image_type": {"type": "string"},
+                    "numero_fuentes": {"type": "integer"},
+                    "numero_contextos": {"type": "integer"},
+                },
+            },  
+        }
+    },
+)
+@api_view(["POST"])
 def list_admin_workspaces(request):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -78,10 +143,34 @@ def list_admin_workspaces(request):
 
 # En fileuploads/views.py - Actualizar la función create_admin_workspaces
 
-@api_view(["GET", "POST"])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    parameters=[
+        OpenApiParameter(
+            name="user_id",
+            description="ID del usuario",
+            required=True,
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+        ),
+    ],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "saved": {"type": "boolean"},
+                "files_uploaded": {"type": "boolean"},
+                "uploaded_files": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+    },
+    summary="Crear workspace (POST)",
+    description="Crea un nuevo workspace (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def create_admin_workspaces(request):
-    print("create_admin_workspaces")
     if request.method == 'POST':
         payload = request.POST.copy()
     else:
@@ -126,6 +215,24 @@ def create_admin_workspaces(request):
 
 
 # También agregar endpoint para monitorear el cache
+@extend_schema(
+    methods=["GET"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "healthy": {"type": "boolean"},
+                "memory_usage_mb": {"type": "number"},
+                "cached_embeddings": {"type": "number"},
+                "warnings": {"type": "array", "items": {"type": "string"}},
+                "should_cleanup": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Estado del cache de embeddings",
+    description="Devuelve el estado del cache de embeddings.",
+    tags=["Cache"],
+)
 @api_view(['GET'])
 def cache_status(request):
     """Endpoint para verificar estado del cache de embeddings"""
@@ -153,6 +260,23 @@ def cache_status(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "message": {"type": "string"},
+                "stats_before": {"type": "object"},
+                "stats_after": {"type": "object"},
+            },
+        }
+    },
+    summary="Forzar limpieza del cache",
+    description="Forza la limpieza del cache de embeddings.",
+    tags=["Cache"],
+)
 @api_view(['POST'])
 def force_cache_cleanup(request):
     """Endpoint para forzar limpieza del cache"""
@@ -170,7 +294,24 @@ def force_cache_cleanup(request):
     except Exception as e:
         return JsonResponse({"error": str(e)}, status=500)
 
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "id": {"type": "integer"},
+                "saved": {"type": "boolean"},
+                "files_uploaded": {"type": "boolean"},
+                "uploaded_files": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+    },
+    summary="Editar workspace (POST)",
+    description="Edita un workspace (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 @csrf_exempt
 def edit_admin_workspaces(request, workspace_id):
     if request.method == 'POST':
@@ -213,8 +354,23 @@ def edit_admin_workspaces(request, workspace_id):
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
 
-
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "workspace": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Registrar workspace (POST)",
+    description="Registra un workspace (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 @csrf_exempt
 def register_admin_workspaces(request, workspace_id):
     if request.method == 'POST':
@@ -248,7 +404,20 @@ def register_admin_workspaces(request, workspace_id):
         print("Error al guardar: ",str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-
+@extend_schema(
+    methods=["DELETE"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Eliminar workspace (DELETE)",
+    description="Elimina un workspace (DELETE).",
+    tags=["Workspaces"],
+)
 @api_view(["DELETE"])
 @csrf_exempt
 def delete_admin_workspaces(request, workspace_id):
@@ -278,7 +447,23 @@ def delete_admin_workspaces(request, workspace_id):
 """
     Secciones de apis para contexts
 """
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "workspace": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def list_workspaces_contexts(request, workspace_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -298,8 +483,23 @@ def list_workspaces_contexts(request, workspace_id):
     
     return JsonResponse(list(list_workspaces), safe=False)
 
-
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "workspace": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def list_admin_workspaces_contexts(request, workspace_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -324,7 +524,23 @@ def list_admin_workspaces_contexts(request, workspace_id):
     
     return JsonResponse(list(list_workspaces_contexts), safe=False)
 
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "workspace": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def create_admin_workspaces_contexts(request):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -402,7 +618,24 @@ def create_admin_workspaces_contexts(request):
         print("Error al guardar contexto: ",e)
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-@api_view(["GET", "POST"])
+
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "workspace": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def edit_admin_workspaces_contexts(request, context_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -484,8 +717,23 @@ def edit_admin_workspaces_contexts(request, context_id):
     except Exception as e:
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-@api_view(["GET", "POST"])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def register_admin_workspaces_contexts(request, context_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -518,9 +766,21 @@ def register_admin_workspaces_contexts(request, context_id):
         print("Error al guardar: ",str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
 
-
+@extend_schema(
+    methods=["DELETE"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Eliminar workspace (DELETE)",
+    description="Elimina un workspace (DELETE).",
+    tags=["Workspaces"],
+)
 @api_view(["DELETE"])
-@csrf_exempt
 def delete_admin_workspaces_contexts(request, context_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -548,8 +808,23 @@ def delete_admin_workspaces_contexts(request, context_id):
 """
     Secciones de apis para files
 """
-
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def list_admin_workspaces_files(request, workspace_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -566,7 +841,23 @@ def list_admin_workspaces_files(request, workspace_id):
     
     return JsonResponse(list(list_files), safe=False)
 
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
     if request.method == 'POST':
         payload = request.POST.copy()
@@ -583,7 +874,23 @@ def list_admin_workspaces_contexts_files(request, workspace_id, context_id):
     
     return JsonResponse(list(list_files), safe=False)
 
-@api_view(["GET", "POST"])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
+@api_view(["POST"])
 def create_admin_workspaces_contexts_files(request):
     allowed_extensions = ['pdf', 'txt', 'xls', 'xlsx']
     if request.method == 'POST':
@@ -647,7 +954,22 @@ def create_admin_workspaces_contexts_files(request):
         "geonode_response": geo_data
     })
 
-
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Listar workspaces (POST)",
+    description="Listar workspaces (POST).",
+    tags=["Workspaces"],
+)
 def embeddingFile(archivo_id,file,context_id,user_id,document_type):
     print("######## embeddingFile #####")
     try:
