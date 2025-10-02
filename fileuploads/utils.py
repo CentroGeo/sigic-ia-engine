@@ -173,6 +173,7 @@ def process_files(request, workspace, user_id):
             print(archivo_id)
 
             #extraer texto
+            uploaded_file.seek(0)
             extracted_text = extract_text_from_file(uploaded_file)
 
             # Detectar idioma
