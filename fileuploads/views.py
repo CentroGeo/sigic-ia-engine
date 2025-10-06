@@ -9,7 +9,7 @@ from django.core.files.storage import FileSystemStorage
 from rest_framework import status
 from django.conf import settings
 from django.db.models import Count, Q
-from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files, upload_image_to_geonode
+from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files, upload_image_to_geonode, process_files_catalog
 import  json 
 import os
 import shutil
@@ -202,7 +202,10 @@ def create_admin_workspaces(request):
             new_workspace.save()
 
             # Procesar archivos si existen
-            answer["uploaded_files"] = process_files(request, new_workspace, user_id)
+            answer["uploaded_files"] = []
+            answer["uploaded_files"] += process_files_catalog(request, new_workspace, user_id)
+            answer["uploaded_files"] += process_files(request, new_workspace, user_id)
+            
             answer["files_uploaded"] = True
             answer["id"] = new_workspace.id
             answer["saved"] = True
@@ -341,7 +344,9 @@ def edit_admin_workspaces(request, workspace_id):
             get_workspace.save()
             
             Files.objects.filter(id__in=workspace_data.getlist('delete_files[]')).delete()
-            answer["uploaded_files"] = process_files(request, get_workspace, user_id)
+            answer["uploaded_files"] = []
+            answer["uploaded_files"] += process_files_catalog(request, get_workspace, user_id)
+            answer["uploaded_files"] += process_files(request, get_workspace, user_id)
             answer["files_uploaded"] = True
             
             answer["id"] = workspace_id
