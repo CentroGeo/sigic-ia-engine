@@ -48,17 +48,18 @@ class Context(models.Model):
         ]
 
 class Files(models.Model):
-    workspace       = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
-    geonode_id     = models.IntegerField(null=True, blank=True)
-    geonode_uuid   = models.UUIDField(null=True, blank=True)
-    geonode_type    = models.TextField(default='')
-    document_type   = models.TextField()
-    user_id         = models.EmailField(null=True, blank=True)
-    filename        = models.TextField(default='')
-    path            = models.TextField(default='')   
-    processed       = models.BooleanField(default=False)
-    language        = models.CharField(max_length=10, default='es')
-    created_date    = models.DateTimeField(auto_now_add=True)
+    workspace        = models.ForeignKey(Workspace, on_delete=models.CASCADE, null=True)
+    geonode_id       = models.IntegerField(null=True, blank=True)
+    geonode_uuid     = models.UUIDField(null=True, blank=True)
+    geonode_type     = models.TextField(default='')
+    geonode_category = models.TextField(default='')
+    document_type    = models.TextField()
+    user_id          = models.EmailField(null=True, blank=True)
+    filename         = models.TextField(default='')
+    path             = models.TextField(default='')   
+    processed        = models.BooleanField(default=False)
+    language         = models.CharField(max_length=10, default='es')
+    created_date     = models.DateTimeField(auto_now_add=True)
     
     class Meta:
         indexes = [

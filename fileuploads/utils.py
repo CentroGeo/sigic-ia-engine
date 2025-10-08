@@ -19,6 +19,7 @@ import time
 import base64
 import tempfile
 import zipfile
+import json
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -190,7 +191,7 @@ def process_files(request, workspace, user_id):
         
         token = request.headers.get("Authorization")
         cookie = request.headers.get("Cookie")
-        type = request.POST.get("type", "archivos cargados")
+        #type = request.POST.get("type", "archivos cargados")
         
         for uploaded_file in request.FILES.getlist('archivos'):            
             # Guardar el archivo físicamente delete
@@ -210,7 +211,8 @@ def process_files(request, workspace, user_id):
             upload_file= Files()
             upload_file.geonode_uuid = geonode_info["uuid"]
             upload_file.geonode_id = geonode_info["id"]
-            upload_file.geonode_type = type
+            upload_file.geonode_type = "Propio"
+            upload_file.geonode_category = "Documento"
             upload_file.user_id = user_id
             upload_file.filename = filename
             upload_file.document_type = uploaded_file.content_type
@@ -278,9 +280,11 @@ def process_files_catalog(request, workspace, user_id):
             length_function=len
         )   
         
-        for register in archivos_geonode:
+        for file in archivos_geonode:
+            register = json.loads(file)
+            id_document = register['id']
             try:
-                url = "https://geonode.dev.geoint.mx/documents/{register}/download".format(register=register)
+                url = "https://geonode.dev.geoint.mx/documents/{register}/download".format(register=id_document)
                 
                 response = requests.get(url)
                 response.raise_for_status()
@@ -297,13 +301,14 @@ def process_files_catalog(request, workspace, user_id):
                                 uploaded_file = convert_to_uploadedfile(filepath)
                                 filename = uploaded_file.name
                                 
-                                geonode_info = get_geonode_document_uuid_by_id(register, token)
+                                geonode_info = get_geonode_document_uuid_by_id(id_document, token)
                                 
                                 #Guardar info en la base de datos
                                 upload_file= Files()
                                 upload_file.geonode_uuid = geonode_info["uuid"]
-                                upload_file.geonode_id = register
-                                upload_file.geonode_type = "catalogo"
+                                upload_file.geonode_id = id_document
+                                upload_file.geonode_type = "Catalogo"
+                                upload_file.geonode_category = register['category']
                                 upload_file.user_id = user_id
                                 upload_file.filename = filename
                                 upload_file.document_type = uploaded_file.content_type
