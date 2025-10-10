@@ -119,7 +119,12 @@ def get_geonode_document_uuid(doc_url, authorization=None):
             headers=headers,
         )
         response.raise_for_status()
-        return response.json()["document"]["uuid"]
+        resp = response.json()
+        
+        return {
+         "uuid": resp["document"]["uuid"],
+         'id': doc_id
+        }
     except Exception as e:
         raise ValueError(f"No se pudo obtener el UUID del documento: {str(e)}")
 
@@ -148,14 +153,15 @@ def process_files(request, workspace, user_id):
             geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
             geo_response.raise_for_status()
             geo_data = geo_response.json()
-            document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), token)
+            geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token)
             #except Exception as e:
             #    print(f"Uploaduploaded_file failed: {str(e)}")
 
             
             #Guardar info en la base de datos
             upload_file= Files()
-            upload_file.document_id = document_uuid
+            upload_file.geonode_uuid = geonode_info["uuid"]
+            upload_file.geonode_id = geonode_info["id"]
             upload_file.geonode_type = type
             upload_file.user_id = user_id
             upload_file.filename = filename
@@ -167,6 +173,7 @@ def process_files(request, workspace, user_id):
             print(archivo_id)
 
             #extraer texto
+            uploaded_file.seek(0)
             extracted_text = extract_text_from_file(uploaded_file)
 
             # Detectar idioma

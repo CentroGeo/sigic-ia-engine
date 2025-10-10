@@ -10,6 +10,7 @@ from django.http import StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
 from fileuploads.embeddings_service import embedder
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from pgvector.django import L2Distance
 from .serializers import HistoryMiniSerializer
 from .models import History
@@ -71,8 +72,23 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
         return []
 
 
-@api_view(['GET', 'POST'])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "context": {"type": "object"},
+                "files": {"type": "array", "items": {"type": "object"}},
+            },
+        }
+    },
+    summary="Chat (POST)",
+    description="Chat (POST).",
+    tags=["Chat"],
+)
+@api_view(["POST"])
 def chat(request):
     server = "http://host.docker.internal:11434"
     payload = request.data
@@ -246,12 +262,27 @@ INSTRUCCIONES:
 
 
 # El resto de tus funciones permanecen igual...
-@api_view(['GET', 'POST'])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "status": {"type": "string"},
+                "chat_id": {"type": "integer"},
+            },
+        }
+    },
+    summary="Generar chat (POST)",
+    description="Generar chat (POST).",
+    tags=["Chat"],
+)
+@api_view(["POST"])
 def historyGenerate(request):
     try:
         if request.method == 'POST':
             payload = request.data
+            user_id = payload['user_id']
             response_model = {
                 "status": "ok"
             }
@@ -259,7 +290,7 @@ def historyGenerate(request):
             if (payload['chat_id'] == 0):
                 print("[DEBUG] nuevo chat")
                 new_history = History()
-                new_history.user_id = payload['user_id']
+                new_history.user_id = user_id
                 new_history.job_id = payload['session_id']
                 new_history.job_status = "Iniciado"
                 new_history.save()
@@ -271,7 +302,7 @@ def historyGenerate(request):
             else:
                 print("[DEBUG] continuación de chat")
                 update_history = History.objects.get(id=payload['chat_id'])
-                update_history.user_id = payload['user_id']
+                update_history.user_id = user_id
                 update_history.job_id = payload['session_id']
                 update_history.job_status = "Iniciado"
                 update_history.save()
@@ -286,8 +317,21 @@ def historyGenerate(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@api_view(['GET', 'POST'])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Obtener chat (POST)",
+    description="Obtener chat (POST).",
+    tags=["Chat"],
+)
+@api_view(["POST"])
 def historyUser(request):
     try:
         if request.method == 'POST':
@@ -303,23 +347,61 @@ def historyUser(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
-@api_view(['GET', 'POST'])
-@csrf_exempt
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Obtener chat (POST)",
+    description="Obtener chat (POST).",
+    tags=["Chat"],
+)
+@api_view(["POST"])
 def get_chat_histories(request):
-    user_id = request.user  
+    try:
+        if request.method == 'POST':
+            payload = request.POST.copy()
+        else:
+            payload = request.GET.copy()
+            
+        user_id = payload.get('user_id')
 
-    if user_id:
-        histories = History.objects.filter(user_id=user_id)
-    else:
-        histories = History.objects.all()
+        if user_id:
+            histories = History.objects.filter(user_id=user_id)
+        else:
+            histories = History.objects.all()
 
-    histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
+        if not histories.exists():
+            return Response([])
+        
+        histories = histories.prefetch_related('context__workspace').order_by('-credate_date')
 
-    serializer = HistoryMiniSerializer(histories, many=True)
-    return Response(serializer.data)
+        serializer = HistoryMiniSerializer(histories, many=True)
+        return Response(serializer.data)
+    
+    except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
 
-
-@api_view(['GET', 'POST'])
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Obtener chat (POST)",
+    description="Obtener chat (POST).",
+    tags=["Chat"],
+)
+@api_view(["POST"])
 @csrf_exempt
 def historyTitle(request):
     try:
@@ -343,6 +425,20 @@ def historyTitle(request):
         return JsonResponse({"error": str(e)}, status=500)
 
 
+@extend_schema(
+    methods=["DELETE"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "saved": {"type": "boolean"},
+            },
+        }
+    },
+    summary="Eliminar chat (DELETE)",
+    description="Elimina un chat (DELETE).",
+    tags=["Chat"],
+)
 @api_view(["DELETE"])
 @csrf_exempt
 def historyRemove(request, chat_id):
@@ -359,7 +455,6 @@ def historyRemove(request, chat_id):
     except Exception as e:
         print("Error al guardar: ",str(e))
         return JsonResponse({"status": "error", "message": str(e)}, status=400)
-
 
 
 

@@ -45,7 +45,7 @@ class TokenUser:
         self.is_authenticated = True 
 
     def __str__(self):
-        return self.payload.get("preferred_username", "unknown")
+        return self.payload.get("email", "no-email")
 
 def get_public_key(kid):
     jwks = requests.get(JWKS_URL_INTERNAL).json()
@@ -81,5 +81,7 @@ class KeycloakAuthentication(BaseAuthentication):
         except Exception as e:
             raise AuthenticationFailed(f"Token inválido: {str(e)}")
 
+        print("DATA!!!", payload)
+        
         user = TokenUser(payload)
         return (user, None)
