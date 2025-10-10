@@ -9,7 +9,9 @@ from django.core.files.storage import FileSystemStorage
 from rest_framework import status
 from django.conf import settings
 from django.db.models import Count, Q
+from pgvector.django import L2Distance
 from .utils import upload_file_to_geonode, extract_text_from_file, vectorize_and_store_text, get_geonode_document_uuid, process_files, upload_image_to_geonode
+from .minimum_metadata import HybridMinimumMetadataExtractor
 import  json 
 import os
 import shutil
@@ -537,35 +539,52 @@ def create_admin_workspaces_contexts_files(request):
         geo_response = upload_file_to_geonode(file, authorization, cookie, title)
         geo_response.raise_for_status()
         geo_data = geo_response.json()
-        # print("Respuesta de GeoNode:", geo_data)
-        document_uuid = get_geonode_document_uuid(geo_data.get("url", ""), authorization)
-        # print("Valor de UUID que se va a guardar:", document_uuid)
-        # return JsonResponse(geo_response.json(), status=geo_response.status_code)
+
+        document_url = geo_data.get("url", "")
+        document_id_segment = document_url.strip("/").split("/")[-1]
+        try:
+            geonode_document_id = int(document_id_segment)
+        except (TypeError, ValueError):
+            return JsonResponse({"error": "No se pudo obtener el ID del documento en GeoNode"}, status=500)
+
+        document_uuid = get_geonode_document_uuid(document_url, authorization)
     except Exception as e:
         return JsonResponse({"error": f"Upload failed: {str(e)}"}, status=500)
 
     try:
-        # 1. Extraer texto
         extracted_text = extract_text_from_file(file)
-        # 2. Guardar archivo en Files model (si no se hace antes)
         saved_file = Files.objects.create(
             context_id=request.POST.get('context_id'),
             user_id=user_id,
-            # document_id=file.name, ######################################## acá iria el uuid
-            #document_id=document_uuid,
-            document_type=file.content_type
+            document_id=document_uuid,
+            document_type=file.content_type,
+            filename=filename
         )
-
-        # 3. Vectorizar y guardar en pgvector
         vectorize_and_store_text(extracted_text, saved_file.id)
-
     except Exception as e:
         return JsonResponse({"error": f"Vectorización fallida: {str(e)}"}, status=500)
+
+    metadata_result = None
+    try:
+        geonode_server = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx")
+        metadata_extractor = HybridMinimumMetadataExtractor(
+            geonode_base_url=geonode_server,
+            authorization=authorization,
+            cookie=cookie,
+        )
+        metadata_result = metadata_extractor.process(
+            uploaded_file=file,
+            file_record=saved_file,
+            geonode_document_id=geonode_document_id,
+        )
+    except Exception as e:
+        metadata_result = {"success": False, "error": str(e)}
 
     # return JsonResponse( {"status": "ok"}, safe=False)
     return JsonResponse({
         "status": "ok",
-        "geonode_response": geo_data
+        "geonode_response": geo_data,
+        "metadata": metadata_result
     })
 
 
