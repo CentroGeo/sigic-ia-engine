@@ -164,13 +164,33 @@ class HybridMinimumMetadataExtractor:
     ) -> Dict[str, Any]:
         pdf_path = self._persist_temporal_file(uploaded_file)
 
+        file_identifiers = {
+            "file_pk": getattr(file_record, "pk", None),
+            "geonode_id": getattr(file_record, "geonode_id", None),
+            "geonode_uuid": getattr(file_record, "geonode_uuid", None),
+            "legacy_document_id": getattr(file_record, "document_id", None),
+        }
+
+        logger.info("[Metadata] Iniciando extracción mínima: %s", file_identifiers)
+
         try:
             pdf_metadata = self._extract_pdf_metadata(pdf_path)
-            rag_metadata = self._extract_rag_metadata(str(file_record.document_id))
+            logger.info("[Metadata] Metadatos PDF extraídos: %s", pdf_metadata)
+
+            rag_metadata = self._extract_rag_metadata(file_record)
+            logger.info("[Metadata] Metadatos RAG extraídos: %s", rag_metadata)
+
             merged_metadata = self._merge_metadata(pdf_metadata, rag_metadata)
+            logger.info("[Metadata] Metadatos combinados listos: %s", merged_metadata)
+
             validation = self._validate_metadata(merged_metadata)
+            logger.info("[Metadata] Validación completada: %s", validation)
+
             geonode_payload = self._map_to_geonode(merged_metadata, additional_data)
+            logger.info("[Metadata] Payload preparado para GeoNode: %s", geonode_payload)
+
             update_result = self._update_geonode_document(geonode_document_id, geonode_payload)
+            logger.info("[Metadata] Resultado actualización GeoNode: %s", update_result)
 
             return {
                 "pdf_metadata": pdf_metadata,
@@ -182,6 +202,7 @@ class HybridMinimumMetadataExtractor:
             }
         finally:
             pdf_path.unlink(missing_ok=True)
+            logger.info("[Metadata] Archivo temporal eliminado")
 
     def _persist_temporal_file(self, uploaded_file) -> "Path":
         from pathlib import Path
@@ -221,45 +242,73 @@ class HybridMinimumMetadataExtractor:
 
         return metadata
 
-    def _extract_rag_metadata(self, document_uuid: Optional[str]) -> Dict[str, Any]:
-        if not document_uuid:
+    def _extract_rag_metadata(self, file_record: Optional[Files]) -> Dict[str, Any]:
+        if not file_record:
+            logger.info("[Metadata] Sin registro de archivo, se omite RAG")
             return {}
 
+        document_uuid = getattr(file_record, "geonode_uuid", None) or getattr(file_record, "document_id", None)
+        logger.info(
+            "[Metadata] Iniciando RAG para file_id=%s, geonode_uuid=%s",
+            getattr(file_record, "pk", None),
+            document_uuid,
+        )
+
         rag_metadata: Dict[str, Any] = {}
+        context_chunks = self._retrieve_context_chunks(file_record)
+
+        if not context_chunks:
+            logger.info(
+                "[Metadata] Sin chunks de contexto disponibles para RAG (file_id=%s)",
+                getattr(file_record, "pk", None),
+            )
+            return {}
 
         for field, questions in self.RAG_QUERIES.items():
             if not questions:
                 continue
 
-            context_chunks = self._retrieve_context_chunks(document_uuid)
-            if not context_chunks:
-                break
-
             context_text = "\n\n".join(text for text, _ in context_chunks[:3])
             prompt = self._build_prompt(field, context_text, questions[0])
+            logger.info(
+                "[Metadata] Prompt generado para %s: %s",
+                field,
+                prompt[:200],
+            )
             response = self._invoke_llm(prompt)
 
             if response:
+                logger.info("[Metadata] Respuesta LLM %s: %s", field, response)
                 processed = self._postprocess_field(field, response)
                 if processed:
                     rag_metadata[field] = processed
+                    logger.info("[Metadata] Campo RAG procesado %s: %s", field, processed)
 
         return rag_metadata
 
-    def _retrieve_context_chunks(self, document_uuid: str, limit: int = 8) -> List[Tuple[str, float]]:
+    def _retrieve_context_chunks(self, file_record: Files, limit: int = 8) -> List[Tuple[str, float]]:
         base_query = "contenido principal documento metadatos información"
         query_embedding = embedder.embed_query(base_query)
 
         if query_embedding is None:
+            logger.info("[Metadata] Embedder sin respuesta para consulta base")
             return []
 
-        embeddings = (
-            DocumentEmbedding.objects.filter(file__document_id=document_uuid)
+        embeddings_qs = (
+            DocumentEmbedding.objects.filter(file=file_record)
             .annotate(distance=L2Distance("embedding", query_embedding.tolist()))
             .order_by("distance")[:limit]
         )
 
-        return [(item.text, float(item.distance or 0)) for item in embeddings]
+        embeddings_list = list(embeddings_qs)
+        logger.info(
+            "[Metadata] Chunks recuperados para file_id=%s: %s/%s",
+            getattr(file_record, "pk", None),
+            len(embeddings_list),
+            limit,
+        )
+
+        return [(item.text, float(item.distance or 0)) for item in embeddings_list]
 
     def _build_prompt(self, field: str, context: str, question: str) -> str:
         if field == "description":
@@ -598,6 +647,12 @@ class HybridMinimumMetadataExtractor:
                 "success": False,
                 "error": "Campos obligatorios faltantes para GeoNode",
             }
+
+        logger.info(
+            "[Metadata] Llamando GeoNode PATCH %s con payload: %s",
+            url,
+            payload,
+        )
 
         try:
             response = requests.patch(url, headers=self.http_headers, json=payload, timeout=30)
