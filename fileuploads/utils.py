@@ -14,32 +14,94 @@ import requests
 import os
 import time
 import base64
+import json
+import uuid
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
-def extract_text_from_file(file):
-    ext = file.name.lower().split('.')[-1]
+def flatten_json(obj, parent_key="", sep="."):
+    items = []
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            new_key = f"{parent_key}{sep}{k}" if parent_key else k
+            items.extend(flatten_json(v, new_key, sep=sep).items())
+    elif isinstance(obj, list):
+        for i, v in enumerate(obj):
+            new_key = f"{parent_key}{sep}{i}" if parent_key else str(i)
+            items.extend(flatten_json(v, new_key, sep=sep).items())
+    else:
+        items.append((parent_key, obj))
+    return dict(items)
 
-    if ext == 'pdf':
+def extract_text_from_file(file, group_size=5):
+    ext = file.name.lower().split(".")[-1]
+    
+    if ext == "json":
+        data = json.load(
+            file
+        )  # se crea dicionario de python con los pares clave valor del json
+        chunks = []
+        if isinstance(data, dict):
+            data = [data]  # lo hacemos iterable
+
+        for entry in data:
+            flattened = flatten_json(entry)
+            # Implementamos una limpieza de datos:
+            campos_validos = {
+                k: str(v)
+                for k, v in flattened.items()
+                if str(v).strip() not in ["", "Desconocido", "nan", "None", "null"]
+            }
+            # formateamos el texto de manera legible para los chunks
+            texto = "\n".join(
+                f"{k.replace('_', ' ').capitalize()}: {v}"
+                for k, v in campos_validos.items()
+            )
+            if texto.strip():
+                chunks.append(texto.strip())
+        return chunks
+
+    if ext == "pdf":
         reader = PdfReader(file)
-        return '\n'.join([page.extract_text() for page in reader.pages if page.extract_text()])
+        return "\n".join(
+            [page.extract_text() for page in reader.pages if page.extract_text()]
+        )
 
-    elif ext == 'txt':
-        return file.read().decode('utf-8')
+    elif ext == "txt":
+        return file.read().decode("utf-8")
 
-    elif ext in ['csv']:
-        return io.StringIO(file.read().decode('utf-8')).read()
+    if ext == "csv":
+        df = pd.read_csv(file)
+        df.fillna("Desconocido", inplace=True)
+        chunks = []
+        for _, row in df.iterrows():
+            #     serialized = " | ".join(f"{col}: {str(val)}" for col, val in row.items())
+            #     chunks.append(serialized)
+            # return chunks
+            campos_validos = {
+                col: str(val)
+                for col, val in row.items()
+                if str(val).strip() not in ["", "Desconocido", "nan", "None"]
+            }
+            texto = "\n".join(
+                f"{col.replace('_', ' ').capitalize()}: {val}"
+                for col, val in campos_validos.items()
+            )
+            if texto.strip():
+                chunks.append(texto.strip())
+        return chunks
 
-    elif ext in ['xlsx', 'xls']:
+    elif ext in ["xlsx", "xls"]:
         df = pd.read_excel(file)
         return df.to_string(index=False)
 
-    elif ext == 'docx':
+    elif ext == "docx":
         doc = docx.Document(file)
-        return '\n'.join([p.text for p in doc.paragraphs])
+        return "\n".join([p.text for p in doc.paragraphs])
 
     else:
         raise ValueError("Unsupported file type")
+
     
 def vectorize_and_store_text(text, file_id):
     vector = model.encode(text).tolist()
@@ -70,7 +132,7 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
         upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
 
         # time.sleep(1)
-
+        
         response = requests.post(
             upload_url,
             data=data,
@@ -150,18 +212,19 @@ def process_files(request, workspace, user_id):
             filename = uploaded_file.name
             # Guardar el archivo geonode
             #try:
-            geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
-            geo_response.raise_for_status()
-            geo_data = geo_response.json()
-            geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token)
+            # geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
+            # geo_response.raise_for_status()
+            # geo_data = geo_response.json()
+            # geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token)
             #except Exception as e:
             #    print(f"Uploaduploaded_file failed: {str(e)}")
 
-            
             #Guardar info en la base de datos
             upload_file= Files()
-            upload_file.geonode_uuid = geonode_info["uuid"]
-            upload_file.geonode_id = geonode_info["id"]
+            # upload_file.geonode_uuid = geonode_info["uuid"]
+            # upload_file.geonode_id = geonode_info["id"]
+            upload_file.geonode_uuid = uuid.uuid4()
+            upload_file.geonode_id = 0
             upload_file.geonode_type = type
             upload_file.user_id = user_id
             upload_file.filename = filename
@@ -179,8 +242,17 @@ def process_files(request, workspace, user_id):
             # Detectar idioma
             language = embedder.detect_language(extracted_text)
 
+            if isinstance(extracted_text, list):
+                # CSV o JSON serializado por registro → ya son chunks
+                chunks = extracted_text
+            else:
+                try:
+                    chunks = text_splitter.split_text(extracted_text)
+                except Exception as e:
+                    print(f"⚠️ Error al hacer split del texto: {str(e)}")
+                    chunks = []
             # Dividir texto en chunks
-            chunks = text_splitter.split_text(extracted_text)   
+            # chunks = text_splitter.split_text(extracted_text)   
 
             # Generar embeddings por lotes (batch) para mejor rendimiento
             embeddings = embedder.embed_texts(chunks)    
