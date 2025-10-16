@@ -21,6 +21,7 @@ import json
 import uuid
 import tempfile
 import zipfile
+import ijson 
 
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
@@ -57,28 +58,44 @@ def extract_text_from_file(file, group_size=5):
     ext = file.name.lower().split(".")[-1]
     
     if ext == "json":
-        data = json.load(
-            file
-        )  # se crea dicionario de python con los pares clave valor del json
+        # data = json.load(
+        #     file
+        # )  # se crea dicionario de python con los pares clave valor del json
+        
         chunks = []
-        if isinstance(data, dict):
-            data = [data]  # lo hacemos iterable
-
-        for entry in data:
+        for entry in ijson.items(file, "item"):
             flattened = flatten_json(entry)
-            # Implementamos una limpieza de datos:
             campos_validos = {
                 k: str(v)
                 for k, v in flattened.items()
                 if str(v).strip() not in ["", "Desconocido", "nan", "None", "null"]
             }
-            # formateamos el texto de manera legible para los chunks
             texto = "\n".join(
                 f"{k.replace('_', ' ').capitalize()}: {v}"
                 for k, v in campos_validos.items()
             )
+            
             if texto.strip():
                 chunks.append(texto.strip())
+                
+        # if isinstance(data, dict):
+        #     data = [data]  # lo hacemos iterable
+
+        # for entry in data:
+        #     flattened = flatten_json(entry)
+        #     # Implementamos una limpieza de datos:
+        #     campos_validos = {
+        #         k: str(v)
+        #         for k, v in flattened.items()
+        #         if str(v).strip() not in ["", "Desconocido", "nan", "None", "null"]
+        #     }
+        #     # formateamos el texto de manera legible para los chunks
+        #     texto = "\n".join(
+        #         f"{k.replace('_', ' ').capitalize()}: {v}"
+        #         for k, v in campos_validos.items()
+        #     )
+        #     if texto.strip():
+        #         chunks.append(texto.strip())
         return chunks
 
     if ext == "pdf":
@@ -254,6 +271,7 @@ def process_files(request, workspace, user_id):
         cookie = request.headers.get("Cookie")
         #type = request.POST.get("type", "archivos cargados")
         
+        print("process_files_archivos")
         for uploaded_file in request.FILES.getlist('archivos'):            
             # Guardar el archivo físicamente delete
             #filename = fs.save(uploaded_file.name, uploaded_file)
@@ -267,6 +285,7 @@ def process_files(request, workspace, user_id):
             #except Exception as e:
             #    print(f"Uploaduploaded_file failed: {str(e)}")
 
+            print("process_files_archivos 2")
             #Guardar info en la base de datos
             upload_file= Files()
             # upload_file.geonode_uuid = geonode_info["uuid"]
@@ -285,9 +304,11 @@ def process_files(request, workspace, user_id):
             print(archivo_id)
 
             #extraer texto
+            print("process_files_archivos 3")
             uploaded_file.seek(0)
             extracted_text = extract_text_from_file(uploaded_file)
-
+            print("process_files_archivos 4")
+            
             # Detectar idioma
             language = embedder.detect_language(extracted_text)
 
@@ -304,8 +325,10 @@ def process_files(request, workspace, user_id):
             # chunks = text_splitter.split_text(extracted_text)   
 
             # Generar embeddings por lotes (batch) para mejor rendimiento
+            print("process_files_archivos 5")
             embeddings = embedder.embed_texts(chunks)    
 
+            print("process_files_archivos 6")
             # Guardar chunks con embeddings
             DocumentEmbedding.objects.bulk_create([
                 DocumentEmbedding(
