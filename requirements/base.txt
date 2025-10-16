@@ -36,3 +36,4 @@ python-magic
 #torch
 transformers
 ollama
+ijson
