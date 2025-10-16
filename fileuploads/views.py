@@ -316,21 +316,28 @@ def force_cache_cleanup(request):
 @api_view(["POST"])
 @csrf_exempt
 def edit_admin_workspaces(request, workspace_id):
+    print(f"[DEBUG] edit_admin_workspaces - workspace_id: {workspace_id}")
+    print(f"[DEBUG] edit_admin_workspaces - Method: {request.method}")
+    print(f"[DEBUG] edit_admin_workspaces - Authorization header present: {bool(request.headers.get('Authorization'))}")
+
     if request.method == 'POST':
         payload = request.POST.copy()
     else:
         payload = request.GET.copy()
-        
+
     user_id = payload.get('user_id')
     workspace_data = request.POST.copy()
-    
+
+    print(f"[DEBUG] edit_admin_workspaces - user_id: {user_id}")
+    print(f"[DEBUG] edit_admin_workspaces - Has archivos in FILES: {'archivos' in request.FILES}")
+
     answer = {
         "id": None,
         "saved": False,
         "files_uploaded": False,
         "uploaded_files": []
     }
-    
+
     try:
         with transaction.atomic():
             workspace_data = request.POST
@@ -1055,3 +1062,159 @@ def cleanup_embedding_cache():
     if cache_stats['memory_usage_mb'] > 100:  # Si usa más de 100MB
         embedder.clear_cache()
         print("Cache de embeddings limpiado por uso excesivo de memoria")
+
+
+@extend_schema(
+    methods=["POST"],
+    parameters=[
+        OpenApiParameter(
+            name="document_id",
+            description="ID del documento en GeoNode",
+            required=True,
+            type=OpenApiTypes.INT,
+            location=OpenApiParameter.QUERY,
+        ),
+    ],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "success": {"type": "boolean"},
+                "message": {"type": "string"},
+                "document_id": {"type": "integer"},
+            },
+        }
+    },
+    summary="Actualizar permisos de documento en GeoNode",
+    description="Actualiza los permisos de un documento en GeoNode para hacerlo público",
+    tags=["Documents"],
+)
+@api_view(["POST"])
+def update_document_permissions(request):
+    """Actualiza los permisos de un documento en GeoNode para hacerlo público"""
+    if request.method == 'POST':
+        payload = request.POST.copy()
+    else:
+        payload = request.GET.copy()
+
+    document_id = payload.get('document_id')
+
+    if not document_id:
+        return JsonResponse({
+            "success": False,
+            "message": "document_id es requerido"
+        }, status=400)
+
+    try:
+        document_id = int(document_id)
+    except ValueError:
+        return JsonResponse({
+            "success": False,
+            "message": "document_id debe ser un número entero"
+        }, status=400)
+
+    # Obtener el token de autorización del request
+    authorization = request.headers.get("Authorization")
+
+    if not authorization:
+        return JsonResponse({
+            "success": False,
+            "message": "Token de autorización no encontrado"
+        }, status=401)
+
+    # Verificar que el documento existe en la base de datos
+    try:
+        file_obj = Files.objects.get(geonode_id=document_id)
+        uuid = str(file_obj.geonode_uuid)
+    except Files.DoesNotExist:
+        return JsonResponse({
+            "success": False,
+            "message": f"Documento {document_id} no encontrado en la base de datos"
+        }, status=404)
+
+    geonode_base_url = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx").rstrip('/')
+
+    # Intentar actualizar permisos usando la API de GeoNode
+    # Método 1: API v2 resources endpoint
+    url = f"{geonode_base_url}/api/v2/resources/{document_id}/permissions"
+
+    headers = {
+        "Authorization": authorization,
+        "Content-Type": "application/json",
+        "Accept": "application/json"
+    }
+
+    payload_data = {
+        "uuid": uuid,
+        "perms": [
+            {
+                "name": "view",
+                "type": "user",
+                "avatar": None,
+                "permissions": "view",
+                "user": {
+                    "username": "AnonymousUser",
+                    "first_name": "",
+                    "last_name": "",
+                    "avatar": None,
+                    "perms": ["view"]
+                }
+            }
+        ]
+    }
+
+    print(f"[DEBUG] Actualizando permisos del documento {document_id}")
+    print(f"[DEBUG] URL: {url}")
+    print(f"[DEBUG] UUID: {uuid}")
+
+    try:
+        response = requests.put(url, json=payload_data, headers=headers, timeout=30)
+
+        if response.status_code in [200, 201, 204]:
+            print(f"[DEBUG] Permisos actualizados exitosamente")
+            return JsonResponse({
+                "success": True,
+                "message": "Permisos actualizados exitosamente",
+                "document_id": document_id,
+                "document_url": f"{geonode_base_url}/documents/{document_id}"
+            }, status=200)
+        else:
+            print(f"[ERROR] Error al actualizar permisos: {response.status_code}")
+            print(f"[ERROR] Respuesta: {response.text[:500]}")
+
+            # Método alternativo 2: endpoint de permisos legacy
+            alt_url = f"{geonode_base_url}/documents/{document_id}/permissions"
+            alt_payload = {
+                "permissions": {
+                    "users": {
+                        "AnonymousUser": ["view_resourcebase"]
+                    },
+                    "groups": {}
+                }
+            }
+
+            print(f"[DEBUG] Intentando método alternativo: {alt_url}")
+            alt_response = requests.post(alt_url, json=alt_payload, headers=headers, timeout=30)
+
+            if alt_response.status_code in [200, 201, 204]:
+                print(f"[DEBUG] Permisos actualizados con método alternativo")
+                return JsonResponse({
+                    "success": True,
+                    "message": "Permisos actualizados exitosamente (método alternativo)",
+                    "document_id": document_id,
+                    "document_url": f"{geonode_base_url}/documents/{document_id}"
+                }, status=200)
+            else:
+                return JsonResponse({
+                    "success": False,
+                    "message": f"No se pudieron actualizar los permisos. Código: {response.status_code}",
+                    "detail": response.text[:200],
+                    "alternative_detail": alt_response.text[:200]
+                }, status=response.status_code)
+
+    except Exception as e:
+        print(f"[ERROR] Excepción al actualizar permisos: {str(e)}")
+        return JsonResponse({
+            "success": False,
+            "message": f"Error al actualizar permisos: {str(e)}"
+        }, status=500)
