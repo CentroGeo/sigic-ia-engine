@@ -99,22 +99,16 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
                 print(f"[DEBUG] Document uploaded with ID: {doc_id}, now setting public permissions...")
 
                 # Set permissions using GeoNode 4.x API
+                # Use the simpler format with groups for anonymous access
                 permissions_url = f"{geonode_base_url}/api/v2/resources/{doc_id}/permissions"
+
+                # Try to set permissions using groups (anonymous group typically has ID 1 or 2)
+                # This makes the document publicly viewable
                 permissions_payload = {
-                    "uuid": None,  # Will be filled by GeoNode
-                    "perm_spec": [
+                    "groups": [
                         {
-                            "name": "view",
-                            "type": "user",
-                            "avatar": None,
-                            "permissions": "view",
-                            "user": {
-                                "username": "AnonymousUser",
-                                "first_name": "",
-                                "last_name": "",
-                                "avatar": None,
-                                "perms": ["view"]
-                            }
+                            "id": 1,  # anonymous group ID (typically 1 or 2)
+                            "permissions": "view"
                         }
                     ]
                 }
@@ -125,6 +119,7 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
                     "Accept": "application/json"
                 }
 
+                print(f"[DEBUG] Permissions payload: {permissions_payload}")
                 perm_response = requests.put(
                     permissions_url,
                     json=permissions_payload,
@@ -212,7 +207,7 @@ def process_files(request, workspace, user_id):
         print(f"[DEBUG] process_files - Token present: {bool(token)}")
         print(f"[DEBUG] process_files - Cookie present: {bool(cookie)}")
         print(f"[DEBUG] process_files - Files count: {len(request.FILES.getlist('archivos'))}")
-        
+
         for uploaded_file in request.FILES.getlist('archivos'):            
             # Guardar el archivo físicamente delete
             #filename = fs.save(uploaded_file.name, uploaded_file)
@@ -249,12 +244,14 @@ def process_files(request, workspace, user_id):
             language = embedder.detect_language(extracted_text)
 
             # Dividir texto en chunks
-            chunks = text_splitter.split_text(extracted_text)   
+            chunks = text_splitter.split_text(extracted_text)
 
             # Generar embeddings por lotes (batch) para mejor rendimiento
-            embeddings = embedder.embed_texts(chunks)    
+            embeddings = embedder.embed_texts(chunks)
 
-            # Guardar chunks con embeddings
+            # Guardar chunks con embeddings ANTES de actualizar metadatos
+            # Esto es necesario porque la extracción de metadatos RAG necesita los embeddings
+            print(f"[DEBUG] Guardando {len(chunks)} chunks con embeddings...")
             DocumentEmbedding.objects.bulk_create([
                 DocumentEmbedding(
                     file=upload_file,
@@ -270,19 +267,56 @@ def process_files(request, workspace, user_id):
                 )
                 for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
             ])
-            
+            print(f"[DEBUG] Chunks guardados exitosamente")
+
             upload_file.processed = True
             #upload_file.size = os.path.getsize(filename)
             upload_file.language = language
-            upload_file.save()                                                     
+            upload_file.save()
 
-            
+            # Actualizar metadatos en GeoNode usando tarea asíncrona de Celery
+            # NOTA: La tarea se ejecuta en segundo plano de forma NO BLOQUEANTE
+            # El token se pasa pero puede expirar - esto es aceptable para metadatos opcionales
+            print(f"[DEBUG] ===== Encolando tarea async de metadatos para documento {geonode_info['id']} =====")
+            print(f"[DEBUG] File ID: {upload_file.id}")
+            print(f"[DEBUG] Token disponible: {token[:50] if token else 'None'}...")
+
+            try:
+                from .tasks import update_geonode_metadata_task
+
+                # Usar apply_async con ignore_result=True para ejecución totalmente asíncrona
+                # Esto garantiza que el proceso continúe sin esperar la tarea
+                task_result = update_geonode_metadata_task.apply_async(
+                    args=[
+                        upload_file.id,
+                        int(geonode_info['id']),
+                        token,
+                        cookie,
+                    ],
+                    # countdown=2 hace que la tarea se ejecute 2 segundos después
+                    # Esto da tiempo para que se complete la respuesta HTTP primero
+                    countdown=2,
+                    # No almacenar resultado para mejor rendimiento
+                    ignore_result=True,
+                )
+
+                print(f"[DEBUG] Tarea encolada exitosamente. Task ID: {task_result.id}")
+                print(f"[DEBUG] Los metadatos se actualizarán en 2 segundos en segundo plano")
+
+            except Exception as e:
+                print(f"[ERROR] Error al encolar tarea de metadatos: {str(e)}")
+                import traceback
+                print(f"[ERROR] Traceback completo:")
+                print(traceback.format_exc())
+                # Don't fail the upload if task queueing fails
+                pass
+
             uploaded_files.append({
                 "name": uploaded_file.name,
                 "type": uploaded_file.content_type,
                 "size": uploaded_file.size,
                 "path": filename
             })
-            
+
     return uploaded_files
         

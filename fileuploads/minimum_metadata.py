@@ -141,11 +141,16 @@ class HybridMinimumMetadataExtractor:
         authorization: str,
         cookie: Optional[str] = None,
         llm_model: str = "llama3.1",
+        ollama_host: str = "http://host.docker.internal:11434",
     ) -> None:
         self.geonode_base_url = geonode_base_url.rstrip("/")
         self.authorization = authorization
         self.cookie = cookie
         self.llm_model = llm_model
+
+        # Create Ollama client with proper host for Docker container
+        self.ollama_client = ollama.Client(host=ollama_host)
+        print(f"[METADATA] Ollama client initialized with host: {ollama_host}")
 
         self.http_headers = {
             "Authorization": authorization,
@@ -155,6 +160,9 @@ class HybridMinimumMetadataExtractor:
         if cookie:
             self.http_headers["Cookie"] = cookie
 
+        # Cache de keywords de GeoNode para evitar múltiples llamadas al API
+        self._keywords_cache: Optional[Dict[str, Dict[str, Any]]] = None
+
     def process(
         self,
         uploaded_file,
@@ -162,7 +170,10 @@ class HybridMinimumMetadataExtractor:
         geonode_document_id: int,
         additional_data: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        pdf_path = self._persist_temporal_file(uploaded_file)
+        # Si no hay archivo, solo usamos RAG metadata (caso async desde Celery)
+        pdf_path = None
+        if uploaded_file is not None:
+            pdf_path = self._persist_temporal_file(uploaded_file)
 
         file_identifiers = {
             "file_pk": getattr(file_record, "pk", None),
@@ -172,25 +183,39 @@ class HybridMinimumMetadataExtractor:
         }
 
         logger.info("[Metadata] Iniciando extracción mínima: %s", file_identifiers)
+        print(f"[METADATA] === Iniciando extracción de metadatos ===")
+        print(f"[METADATA] File ID: {file_identifiers.get('file_pk')}, GeoNode ID: {geonode_document_id}")
+        print(f"[METADATA] Modo: {'PDF + RAG' if pdf_path else 'Solo RAG (async)'}")
 
         try:
-            pdf_metadata = self._extract_pdf_metadata(pdf_path)
-            logger.info("[Metadata] Metadatos PDF extraídos: %s", pdf_metadata)
+            # Extraer metadatos PDF solo si tenemos el archivo
+            pdf_metadata = {}
+            if pdf_path:
+                pdf_metadata = self._extract_pdf_metadata(pdf_path)
+                logger.info("[Metadata] Metadatos PDF extraídos: %s", pdf_metadata)
+                print(f"[METADATA] Metadatos PDF extraídos: {pdf_metadata.get('title', 'N/A')}")
+            else:
+                print(f"[METADATA] Saltando extracción PDF (modo async)")
 
             rag_metadata = self._extract_rag_metadata(file_record)
             logger.info("[Metadata] Metadatos RAG extraídos: %s", rag_metadata)
+            print(f"[METADATA] Metadatos RAG extraídos: {len(rag_metadata)} campos")
 
             merged_metadata = self._merge_metadata(pdf_metadata, rag_metadata)
             logger.info("[Metadata] Metadatos combinados listos: %s", merged_metadata)
+            print(f"[METADATA] Metadatos combinados: título='{merged_metadata.get('title', 'N/A')}'")
 
             validation = self._validate_metadata(merged_metadata)
             logger.info("[Metadata] Validación completada: %s", validation)
+            print(f"[METADATA] Validación: score={validation.get('quality_score', 0)}%")
 
             geonode_payload = self._map_to_geonode(merged_metadata, additional_data)
             logger.info("[Metadata] Payload preparado para GeoNode: %s", geonode_payload)
+            print(f"[METADATA] Payload GeoNode preparado con {len(geonode_payload)} campos")
 
             update_result = self._update_geonode_document(geonode_document_id, geonode_payload)
             logger.info("[Metadata] Resultado actualización GeoNode: %s", update_result)
+            print(f"[METADATA] Actualización GeoNode: success={update_result.get('success', False)}")
 
             return {
                 "pdf_metadata": pdf_metadata,
@@ -201,8 +226,9 @@ class HybridMinimumMetadataExtractor:
                 "update_result": update_result,
             }
         finally:
-            pdf_path.unlink(missing_ok=True)
-            logger.info("[Metadata] Archivo temporal eliminado")
+            if pdf_path:
+                pdf_path.unlink(missing_ok=True)
+                logger.info("[Metadata] Archivo temporal eliminado")
 
     def _persist_temporal_file(self, uploaded_file) -> "Path":
         from pathlib import Path
@@ -333,7 +359,8 @@ class HybridMinimumMetadataExtractor:
 
     def _invoke_llm(self, prompt: str) -> str:
         try:
-            result = ollama.generate(
+            print(f"[METADATA] Llamando a Ollama con modelo {self.llm_model}...")
+            result = self.ollama_client.generate(
                 model=self.llm_model,
                 prompt=prompt,
                 options={
@@ -342,9 +369,12 @@ class HybridMinimumMetadataExtractor:
                     "max_tokens": 300,
                 },
             )
-            return result.get("response", "").strip()
+            response = result.get("response", "").strip()
+            print(f"[METADATA] Respuesta de Ollama recibida: {len(response)} caracteres")
+            return response
         except Exception as exc:
             logger.warning("Fallo consulta al modelo Ollama: %s", exc)
+            print(f"[METADATA] ERROR Ollama: {str(exc)}")
             return ""
 
     def _postprocess_field(self, field: str, raw_value: str) -> Any:
@@ -609,26 +639,50 @@ class HybridMinimumMetadataExtractor:
         metadata: Dict[str, Any],
         additional_data: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        payload: Dict[str, Any] = {
-            "title": metadata.get("title"),
-            "abstract": metadata.get("description"),
-            "date": metadata.get("dateIssued"),
-            "resource_type": metadata.get("resourceType"),
-            "poc": ", ".join(metadata.get("creator", [])) if metadata.get("creator") else None,
-            "metadata_author": metadata.get("publisher"),
-            "keywords": metadata.get("subject"),
-            "license": metadata.get("rights"),
-            "language": metadata.get("language"),
-        }
+        # Only include fields that GeoNode 4.x accepts for documents
+        # Using simpler field names that are more compatible
+        payload: Dict[str, Any] = {}
 
-        payload = {k: v for k, v in payload.items() if v}
+        # Core metadata fields
+        if metadata.get("title"):
+            payload["title"] = metadata.get("title")
 
-        payload["metadata_standard"] = "Dublin Core + DataCite"
-        payload["processing_method"] = "Hybrid PDF + RAG extraction"
-        payload["last_updated"] = datetime.now(timezone.utc).isoformat()
+        if metadata.get("description"):
+            payload["abstract"] = metadata.get("description")
 
+        # Keywords - GeoNode 4.4.x requiere que las keywords ya existan en la base de datos
+        # Solo se asignan keywords que están previamente registradas en GeoNode
+        if metadata.get("subject"):
+            subjects = metadata.get("subject")
+            keyword_names = subjects if isinstance(subjects, list) else [str(subjects)]
+
+            # Verificar que las keywords existan y obtener sus slugs
+            valid_slugs = self._ensure_keywords_exist(keyword_names)
+
+            if valid_slugs:
+                # Usar los slugs de las keywords existentes
+                payload["keywords"] = valid_slugs
+                print(f"[METADATA] {len(valid_slugs)} keywords válidas serán asignadas")
+            else:
+                print(f"[METADATA] Ninguna keyword válida encontrada, omitiendo campo keywords")
+
+        # Language - should be ISO code
+        if metadata.get("language"):
+            payload["language"] = metadata.get("language")
+
+        # Attribution/credit field instead of poc
+        if metadata.get("creator"):
+            creators = metadata.get("creator")
+            if isinstance(creators, list):
+                payload["attribution"] = ", ".join(creators)
+            else:
+                payload["attribution"] = str(creators)
+
+        # Only add additional_data if provided
         if additional_data:
-            payload.update({k: v for k, v in additional_data.items() if v})
+            for k, v in additional_data.items():
+                if v and k not in payload:  # Don't override existing values
+                    payload[k] = v
 
         return payload
 
@@ -638,11 +692,13 @@ class HybridMinimumMetadataExtractor:
         payload: Dict[str, Any],
     ) -> Dict[str, Any]:
         if not payload:
+            print("[METADATA] ERROR: Sin datos para actualizar")
             return {"success": False, "error": "Sin datos para actualizar"}
 
         url = f"{self.geonode_base_url}/api/v2/documents/{document_id}/"
 
         if "title" not in payload or "abstract" not in payload:
+            print(f"[METADATA] ERROR: Campos obligatorios faltantes - title: {'title' in payload}, abstract: {'abstract' in payload}")
             return {
                 "success": False,
                 "error": "Campos obligatorios faltantes para GeoNode",
@@ -653,10 +709,13 @@ class HybridMinimumMetadataExtractor:
             url,
             payload,
         )
+        print(f"[METADATA] Llamando GeoNode PATCH: {url}")
+        print(f"[METADATA] Payload: title={payload.get('title')}, abstract_length={len(payload.get('abstract', ''))} chars")
 
         try:
             response = requests.patch(url, headers=self.http_headers, json=payload, timeout=30)
             response.raise_for_status()
+            print(f"[METADATA] GeoNode PATCH exitoso: {response.status_code}")
             return {
                 "success": True,
                 "status_code": response.status_code,
@@ -664,10 +723,13 @@ class HybridMinimumMetadataExtractor:
             }
         except requests.RequestException as exc:
             logger.warning("Fallo actualización GeoNode: %s", exc)
+            print(f"[METADATA] ERROR en PATCH: {str(exc)}")
+            if hasattr(exc, 'response') and exc.response is not None:
+                print(f"[METADATA] Response status: {exc.response.status_code}, body: {exc.response.text[:500]}")
             return {
                 "success": False,
                 "error": str(exc),
-                "status_code": getattr(exc.response, "status_code", None),
+                "status_code": getattr(exc.response, "status_code", None) if hasattr(exc, 'response') else None,
             }
 
     def _format_pdf_date(self, pdf_date: Optional[str]) -> Optional[str]:
@@ -686,3 +748,109 @@ class HybridMinimumMetadataExtractor:
     def _detect_language_from_pdf(self, pdf_info) -> str:
         lang_field = pdf_info.get("/Language", "") if pdf_info else ""
         return self._normalize_language(lang_field or "es")
+
+    def _get_geonode_keywords(self) -> Dict[str, Dict[str, Any]]:
+        """
+        Obtiene todas las keywords existentes en GeoNode y las almacena en caché.
+
+        Returns:
+            Dict mapeando nombre de keyword (normalizado) a su información completa
+        """
+        if self._keywords_cache is not None:
+            return self._keywords_cache
+
+        logger.info("[Keywords] Obteniendo keywords existentes de GeoNode...")
+        print(f"[KEYWORDS] Consultando keywords existentes en GeoNode...")
+
+        self._keywords_cache = {}
+
+        try:
+            page = 1
+            page_size = 100
+            total_keywords = 0
+
+            while True:
+                url = f"{self.geonode_base_url}/api/v2/keywords?page={page}&page_size={page_size}"
+                response = requests.get(url, headers=self.http_headers, timeout=30)
+                response.raise_for_status()
+                data = response.json()
+
+                keywords = data.get("keywords", [])
+                for kw in keywords:
+                    # Normalizar nombre para búsqueda case-insensitive
+                    normalized_name = kw["name"].lower().strip()
+                    self._keywords_cache[normalized_name] = {
+                        "id": kw["id"],
+                        "name": kw["name"],
+                        "slug": kw["slug"],
+                    }
+                    total_keywords += 1
+
+                # Verificar si hay más páginas
+                if not data.get("links", {}).get("next"):
+                    break
+
+                page += 1
+
+            logger.info(f"[Keywords] Cache construido: {total_keywords} keywords")
+            print(f"[KEYWORDS] Cache construido con {total_keywords} keywords existentes")
+
+        except Exception as exc:
+            logger.warning(f"[Keywords] Error obteniendo keywords de GeoNode: {exc}")
+            print(f"[KEYWORDS] ERROR: No se pudo obtener keywords: {str(exc)}")
+            # Retornar cache vacío en caso de error
+            self._keywords_cache = {}
+
+        return self._keywords_cache
+
+    def _ensure_keywords_exist(self, keyword_names: List[str]) -> List[str]:
+        """
+        Verifica que las keywords existan en GeoNode.
+        En GeoNode 4.4.x, las keywords deben existir previamente.
+
+        Esta función retorna solo las keywords que YA EXISTEN en GeoNode.
+
+        Args:
+            keyword_names: Lista de nombres de keywords a verificar
+
+        Returns:
+            Lista de slugs de keywords que existen en GeoNode
+        """
+        if not keyword_names:
+            return []
+
+        logger.info(f"[Keywords] Verificando {len(keyword_names)} keywords...")
+        print(f"[KEYWORDS] Verificando {len(keyword_names)} keywords propuestas...")
+
+        # Obtener cache de keywords existentes
+        existing_keywords = self._get_geonode_keywords()
+
+        matched_slugs = []
+        missing_keywords = []
+
+        for kw_name in keyword_names:
+            normalized = kw_name.lower().strip()
+
+            if normalized in existing_keywords:
+                # Keyword existe, usar su slug
+                slug = existing_keywords[normalized]["slug"]
+                matched_slugs.append(slug)
+                logger.info(f"[Keywords] ✓ '{kw_name}' encontrada con slug '{slug}'")
+                print(f"[KEYWORDS] ✓ Keyword '{kw_name}' existe (slug: {slug})")
+            else:
+                # Keyword no existe
+                missing_keywords.append(kw_name)
+                logger.warning(f"[Keywords] ✗ '{kw_name}' NO existe en GeoNode")
+                print(f"[KEYWORDS] ✗ Keyword '{kw_name}' NO existe en GeoNode (se omitirá)")
+
+        if missing_keywords:
+            logger.warning(
+                f"[Keywords] {len(missing_keywords)} keywords no encontradas: {missing_keywords[:5]}"
+            )
+            print(f"[KEYWORDS] ADVERTENCIA: {len(missing_keywords)} keywords no se asignarán porque no existen en GeoNode")
+            print(f"[KEYWORDS] Sugerencia: Crear estas keywords manualmente en GeoNode primero")
+
+        logger.info(f"[Keywords] {len(matched_slugs)} keywords válidas de {len(keyword_names)} propuestas")
+        print(f"[KEYWORDS] Resultado: {len(matched_slugs)}/{len(keyword_names)} keywords válidas")
+
+        return matched_slugs

@@ -16,10 +16,28 @@ services:
       - "8001:8001"
     depends_on:
       - db
-    
+
     entrypoint: sh ./scripts/entrypoint.sh
     networks:
       - red_geolex
+
+  celery:
+    env_file: .env_dev
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-dev}
+    container_name: modulo-ia-celery
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    entrypoint: ["celery", "-A", "llm", "worker", "--loglevel=info"]
+    networks:
+      - red_geolex
+    restart: always
 
   db:
       container_name: modulo-ia-db
