@@ -20,9 +20,7 @@ services:
     networks:
       - sigicnetwork
 
-volumes:
-  postgres_data:
- 
+
 networks:
   sigicnetwork:
     driver: bridge
