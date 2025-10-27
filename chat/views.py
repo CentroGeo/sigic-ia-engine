@@ -19,9 +19,11 @@ import time
 import threading
 import requests
 import json
+import os
 from typing import List
 
 llm_lock: threading.Lock = threading.Lock()
+ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
 
 
 def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[DocumentEmbedding]:
@@ -90,7 +92,8 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 )
 @api_view(["POST"])
 def chat(request):
-    server = "http://host.docker.internal:11434"
+    #server = "http://host.docker.internal:11434"
+    server = ollama_server
     payload = request.data
 
     model = payload["model"]

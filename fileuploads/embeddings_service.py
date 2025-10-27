@@ -8,14 +8,15 @@ from langchain.text_splitter import RecursiveCharacterTextSplitter
 import re
 from django.utils import timezone
 from datetime import timedelta
+import os
 
 logger = logging.getLogger(__name__)
-
+ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
 
 class OllamaEmbedder:
     def __init__(self,
                  model_name='nomic-embed-text',
-                 host='http://host.docker.internal:11434',
+                 host=ollama_server,
                  max_chunk_size=512,  # Tamaño máximo por chunk
                  chunk_overlap=50,  # Overlap entre chunks
                  batch_size=10,  # Número de chunks por batch

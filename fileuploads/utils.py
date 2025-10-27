@@ -302,7 +302,7 @@ def process_files(request, workspace, user_id):
             upload_file.geonode_uuid = uuid.uuid4()
             upload_file.geonode_id = 0
             upload_file.geonode_type = "Propio"
-            upload_file.geonode_category = "Documento"
+            upload_file.geonode_category = "documents"
             upload_file.user_id = user_id
             upload_file.filename = filename
             upload_file.document_type = uploaded_file.content_type
