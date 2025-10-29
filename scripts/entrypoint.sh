@@ -43,6 +43,6 @@ if [ "${DJANGO_ENV}" = "prod" ]; then
     --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
 else
   echo "▶️ Iniciando servidor de desarrollo con autoreload"
-  exec python manage.py runserver 0.0.0.0:8001 --settings=$DJANGO_SETTINGS
+  exec python manage.py runserver 0.0.0.0:8000 --settings=$DJANGO_SETTINGS
 fi
   
