@@ -20,6 +20,7 @@ import threading
 import requests
 import json
 from typing import List
+from django.conf import settings
 
 llm_lock: threading.Lock = threading.Lock()
 
@@ -90,7 +91,7 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 )
 @api_view(["POST"])
 def chat(request):
-    server = "http://host.docker.internal:11434"
+    server = settings.OLLAMA_API_URL
     payload = request.data
 
     model = payload["model"]
