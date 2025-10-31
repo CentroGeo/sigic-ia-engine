@@ -4,7 +4,7 @@ from langdetect import detect
 from typing import List, Tuple, Dict, Any
 import time
 import logging
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitter import RecursiveCharacterTextSplitter
 import re
 from django.utils import timezone
 from datetime import timedelta

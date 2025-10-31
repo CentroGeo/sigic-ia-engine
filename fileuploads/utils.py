@@ -6,7 +6,7 @@ from sentence_transformers import SentenceTransformer
 from .models import DocumentEmbedding, Files
 from django.conf import settings
 from django.core.files.storage import FileSystemStorage
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 from requests.auth import HTTPBasicAuth
 import io

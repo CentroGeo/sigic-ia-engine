@@ -16,7 +16,7 @@ import  json
 import os
 import shutil
 import requests
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitter import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 import uuid
