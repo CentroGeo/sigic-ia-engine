@@ -134,7 +134,10 @@ MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 
-OLLAMA_HOST = "http://localhost:11434"  # O tu URL de Ollama
+OLLAMA_PROTO = os.getenv("OLLAMA_PROTO", 'http')
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", 'localhost')
+OLLAMA_PORT = os.getenv("OLLAMA_PORT", '11434')
+OLLAMA_API_URL = f"{OLLAMA_PROTO}://{OLLAMA_HOST}:{OLLAMA_PORT}"
 EMBEDDING_MODEL = "mxbai-embed-large"  # Modelo multilingüe
 
 # Configuración para el modelo de embeddings

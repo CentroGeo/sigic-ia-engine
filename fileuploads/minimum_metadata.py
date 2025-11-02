@@ -12,7 +12,7 @@ from pgvector.django import L2Distance
 
 from .embeddings_service import embedder
 from .models import DocumentEmbedding, Files
-
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 
@@ -141,7 +141,7 @@ class HybridMinimumMetadataExtractor:
         authorization: str,
         cookie: Optional[str] = None,
         llm_model: str = "llama3.1",
-        ollama_host: str = "http://host.docker.internal:11434",
+        ollama_host: str = settings.OLLAMA_API_URL,
     ) -> None:
         self.geonode_base_url = geonode_base_url.rstrip("/")
         self.authorization = authorization
