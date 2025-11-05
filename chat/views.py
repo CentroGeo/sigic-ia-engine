@@ -21,6 +21,7 @@ import requests
 import json
 from typing import List
 from django.conf import settings
+import os
 
 llm_lock: threading.Lock = threading.Lock()
 
@@ -209,7 +210,7 @@ INSTRUCCIONES:
                     f"{server}/api/chat",
                     json=updated_payload,
                     headers={"Content-Type": "application/json"},
-                    timeout=500,
+                    timeout=int(os.environ.get("OLLAMA_TIMEOUT", 600)),
                     stream=True
             ) as resp:
                 resp.raise_for_status()
@@ -487,7 +488,7 @@ def generate_chat_title(server_url: str, question: str, answer: str, model_name:
             f"{server_url}/api/chat",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout = int(os.environ.get("OLLAMA_TIMEOUT", 600)),
         )
         response.raise_for_status()
         title_data = response.json()
