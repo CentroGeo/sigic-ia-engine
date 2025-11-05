@@ -21,6 +21,7 @@ import requests
 import json
 from typing import List
 from django.conf import settings
+import os
 
 llm_lock: threading.Lock = threading.Lock()
 
