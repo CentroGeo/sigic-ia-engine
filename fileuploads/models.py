@@ -1,3 +1,4 @@
+from django.db import connection
 from django.db import models
 from pgvector.django import VectorField
 import uuid
@@ -71,6 +72,8 @@ class DocumentEmbedding(models.Model):
     file            = models.ForeignKey(Files, on_delete=models.CASCADE, related_name='chunks')
     chunk_index     = models.IntegerField()
     text            = models.TextField()
+    text_json       = models.JSONField(default=dict, blank=True, null=True)
+    metadata_json   = models.JSONField(default=dict, blank=True, null=True)
     embedding       = VectorField(dimensions=768)  # nomic-embed-text-v2 usa 768 dimensiones
     language        = models.CharField(max_length=10, default='es')
     metadata        = models.JSONField(default=dict)
@@ -82,6 +85,29 @@ class DocumentEmbedding(models.Model):
             models.Index(fields=['file']),
             models.Index(fields=['language']),
         ]
+
+    @staticmethod
+    def get_json_keys_with_types(list_files_json_ids):
+        query = """
+            SELECT 
+                j.key,
+                jsonb_typeof(j.value) AS value_type,
+                COUNT(*) AS count_rows
+            FROM fileuploads_documentembedding f,
+                 LATERAL jsonb_each(f.metadata_json::jsonb) AS j(key, value)
+            where file_id = ANY(%s)
+            GROUP BY j.key, jsonb_typeof(j.value)
+            ORDER BY j.key;
+        """
+        if not list_files_json_ids:
+            return []
+                
+        with connection.cursor() as cursor:
+            cursor.execute(query, [list_files_json_ids])
+            return [
+                {"key": k, "type": t, "count": c}
+                for k, t, c in cursor.fetchall()
+            ]
 
 # from django.db import models
 # from pgvector.django import VectorField

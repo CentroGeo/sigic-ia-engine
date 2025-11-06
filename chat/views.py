@@ -20,7 +20,9 @@ import threading
 import requests
 import json
 import os
+from .prompts import BASE_SYSTEM_PROMPT_JSON
 from typing import List
+from django.db import connection
 
 llm_lock: threading.Lock = threading.Lock()
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
@@ -142,71 +144,143 @@ def chat(request):
 
                 print(f"[DEBUG] Iniciando búsqueda RAG para: {query[:100]}...")
 
-                # Usar la nueva función optimized_rag_search
-                relevant_chunks = optimized_rag_search(
-                    context_id=context.id,
-                    query=query,
-                    top_k=30  # Reducido para mejor rendimiento
-                )
+                files_json = context.files.filter(document_type='application/json').count()
+                print(f"[DEBUG] files_json: {files_json}", flush=True)
+                if(files_json == 0):
+                    # Usar la nueva función optimized_rag_search
+                    relevant_chunks = optimized_rag_search(
+                        context_id=context.id,
+                        query=query,
+                        top_k=30  # Reducido para mejor rendimiento
+                    )
 
-                # Construir contexto RAG si hay chunks relevantes
-                if relevant_chunks:
-                    # Agrupar chunks por documento para mejor contexto
-                    docs_context = {}
-                    for chunk in relevant_chunks:
-                        doc_name = chunk.file.filename
-                        if doc_name not in docs_context:
-                            docs_context[doc_name] = []
-                        docs_context[doc_name].append({
-                            'text': chunk.text[:800],  # Limitar texto por chunk
-                            'similarity': chunk.similarity
+                    # Construir contexto RAG si hay chunks relevantes
+                    if relevant_chunks:
+                        # Agrupar chunks por documento para mejor contexto
+                        docs_context = {}
+                        for chunk in relevant_chunks:
+                            doc_name = chunk.file.filename
+                            if doc_name not in docs_context:
+                                docs_context[doc_name] = []
+                            docs_context[doc_name].append({
+                                'text': chunk.text[:800],  # Limitar texto por chunk
+                                'similarity': chunk.similarity
+                            })
+
+                        # Construir contexto optimizado
+                        rag_context = "Contexto relevante de los documentos:\n\n"
+
+                        for doc_name, chunks in docs_context.items():
+                            # Ordenar chunks por similitud
+                            chunks.sort(key=lambda x: x['similarity'], reverse=True)
+
+                            rag_context += f"📄 **{doc_name}**:\n"
+                            for i, chunk_data in enumerate(chunks[:3]):  # Max 3 chunks por documento
+                                rag_context += f"- {chunk_data['text']}\n"
+                            rag_context += "\n"
+
+                        print(f"[DEBUG] RAG context construido: {len(rag_context)} caracteres")    
+                        # Insertar contexto RAG en el sistema prompt
+                        system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
+
+    {rag_context}
+
+    INSTRUCCIONES:
+    - Responde SIEMPRE en español
+    - Basa tu respuesta en el contexto proporcionado
+    - Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
+    - Cita los documentos relevantes cuando sea apropiado
+    - Sé conciso pero completo en tu respuesta"""
+
+                        updated_payload["messages"].insert(0, {
+                            "role": "system",
+                            "content": system_prompt
                         })
 
-                    # Construir contexto optimizado
-                    rag_context = "Contexto relevante de los documentos:\n\n"
+                        relevant_docs = list(docs_context.keys())
+                        print(f"[DEBUG] Documentos utilizados: {relevant_docs}")
 
-                    for doc_name, chunks in docs_context.items():
-                        # Ordenar chunks por similitud
-                        chunks.sort(key=lambda x: x['similarity'], reverse=True)
-
-                        rag_context += f"📄 **{doc_name}**:\n"
-                        for i, chunk_data in enumerate(chunks[:3]):  # Max 3 chunks por documento
-                            rag_context += f"- {chunk_data['text']}\n"
-                        rag_context += "\n"
-
-                    print(f"[DEBUG] RAG context construido: {len(rag_context)} caracteres")
-
-                    # Insertar contexto RAG en el sistema prompt
-                    system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
-
-{rag_context}
-
-INSTRUCCIONES:
-- Responde SIEMPRE en español
-- Basa tu respuesta en el contexto proporcionado
-- Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
-- Cita los documentos relevantes cuando sea apropiado
-- Sé conciso pero completo en tu respuesta"""
-
-                    updated_payload["messages"].insert(0, {
-                        "role": "system",
-                        "content": system_prompt
-                    })
-
-                    relevant_docs = list(docs_context.keys())
-                    print(f"[DEBUG] Documentos utilizados: {relevant_docs}")
+                    else:
+                        print("[WARNING] No se encontraron chunks relevantes para la consulta RAG")
+                        # Prompt para cuando no hay contexto
+                        updated_payload["messages"].insert(0, {
+                            "role": "system",
+                            "content": "Eres un asistente amable. El usuario ha hecho una pregunta pero no tengo información específica en los documentos para responderla. Responde amablemente que no tienes información suficiente sobre ese tema específico en los documentos disponibles."
+                        })
 
                 else:
-                    print("[WARNING] No se encontraron chunks relevantes para la consulta RAG")
-                    # Prompt para cuando no hay contexto
-                    updated_payload["messages"].insert(0, {
-                        "role": "system",
-                        "content": "Eres un asistente amable. El usuario ha hecho una pregunta pero no tengo información específica en los documentos para responderla. Responde amablemente que no tienes información suficiente sobre ese tema específico en los documentos disponibles."
-                    })
+                    list_files_json = list(context.files.filter(document_type='application/json').values_list('id', flat=True))
+                    
+                    print("Lista de keys:", list_files_json,flush=True)
+                    lista_de_keys = DocumentEmbedding.get_json_keys_with_types(list_files_json)
+                    # for row in lista_de_keys:
+                    #     print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
+                    
+                    system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=lista_de_keys, list_files_json=list_files_json)
+                    llm_context = payload["messages"][1]["content"]
+                    url = f"{server}/api/chat"
+                    sql_payload = {
+                        "model": "deepseek-r1",
+                        "messages": [
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": llm_context},
+                        ],
+                        "stream": False,
+                    }
+                    
+                    resp = requests.post(
+                        url, 
+                        json=sql_payload, 
+                        headers={"Content-Type": "application/json"}, 
+                        timeout=500
+                    )
+                    resp.raise_for_status()
+                    data = resp.json()
+                    sql = data["message"]["content"]
+                    rows = None
+                    with connection.cursor() as cursor:
+                        cursor.execute(sql)
+                        rows = cursor.fetchall()
 
+                    rows_serializable = []
+                    for row in rows:
+                        serialized_row = []
+                        for value in row:
+                            if value is None:
+                                serialized_row.append(None)
+                            else:
+                                # Convert all values to string for JSON serialization
+                                serialized_row.append(str(value))
+                        rows_serializable.append(serialized_row)
+
+                    row_count = len(rows_serializable)
+
+                    print("respuesta SQL", data["message"]["content"], flush=True)
+
+                    try:
+                        if rows_serializable:
+                            # Limit sample data for insight generation
+                            sample_rows = rows_serializable[:3]
+                            insight_prompt = (
+                                f"Pregunta del usuario: {llm_context}\n"
+                                f"Consulta SQL ejecutada: {sql}\n"
+                                f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                                f"Muestra de datos: {sample_rows}\n\n"
+                                "Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
+                            )
+                            
+                            system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                            
+                            updated_payload["messages"].insert(0, {
+                                "role": "system",
+                                "content": system_prompt
+                            })
+                    except Exception as e:
+                        l = 0
             # =================== LLAMADA A OLLAMA ===================
             print(f"[DEBUG] Enviando {len(updated_payload['messages'])} mensajes a Ollama")
 
+            print("datA!!!!", updated_payload, flush=True)
             with requests.post(
                     f"{server}/api/chat",
                     json=updated_payload,

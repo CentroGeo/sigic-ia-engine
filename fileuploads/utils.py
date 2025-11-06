@@ -55,6 +55,38 @@ def flatten_json(obj, parent_key="", sep="."):
         items.append((parent_key, obj))
     return dict(items)
 
+def get_keys_and_types(data):
+    def get_type(value):
+        if isinstance(value, str):
+            return "string"
+        elif isinstance(value, int):
+            return "integer"
+        elif isinstance(value, bool):
+            return "boolean"
+        elif isinstance(value, list):
+            return "array"
+        elif isinstance(value, dict):
+            return "object"
+        else:
+            return "unknown"
+    
+    result = {}
+    
+    for key, value in data.items():
+        if any(char.isdigit() for char in key):
+            parts = key.split('.')
+            # Filtrar las partes con números y transformarlas en formato 'array'
+            new_key_parts = [part if not part.isdigit() else 'array' for part in parts]
+            new_key = '.'.join(new_key_parts)
+            
+            # Si la clave ya está en el resultado, simplemente agregamos el tipo
+            if new_key not in result:
+                result[new_key] = get_type(value)
+        else:
+            result[key] = get_type(value)
+    
+    return result
+
 def extract_text_from_file(file, group_size=5):
     ext = file.name.lower().split(".")[-1]
     
@@ -64,21 +96,29 @@ def extract_text_from_file(file, group_size=5):
         # )  # se crea dicionario de python con los pares clave valor del json
         
         chunks = []
+        chunks_originales = []
+        metadata_chunks = []
+        count = 0
         for entry in ijson.items(file, "item"):
-            flattened = flatten_json(entry)
-            campos_validos = {
-                k: str(v)
-                for k, v in flattened.items()
-                if str(v).strip() not in ["", "Desconocido", "nan", "None", "null"]
-            }
-            texto = "\n".join(
-                f"{k.replace('_', ' ').capitalize()}: {v}"
-                for k, v in campos_validos.items()
-            )
-            
-            if texto.strip():
-                chunks.append(texto.strip())
-        return chunks
+            if (count < 100):
+                count += 1
+                flattened = flatten_json(entry)
+                campos_validos = {
+                    k: str(v)
+                    for k, v in flattened.items()
+                    if str(v).strip() not in ["", "Desconocido", "nan", "None", "null"]
+                }
+                texto = "\n".join(
+                    f"{k.replace('_', ' ').capitalize()}: {v}"
+                    for k, v in campos_validos.items()
+                )
+                
+                if texto.strip():
+                    chunks.append(texto.strip())
+                    metadata_chunks.append(get_keys_and_types(flattened))
+                chunks_originales.append(entry)
+                
+        return chunks, chunks_originales, metadata_chunks
 
     if ext == "pdf":
         reader = PdfReader(file)
@@ -288,17 +328,17 @@ def process_files(request, workspace, user_id):
             filename = uploaded_file.name
             # Guardar el archivo geonode
             #try:
-            geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
-            geo_response.raise_for_status()
-            geo_data = geo_response.json()
-            geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token, "documents")
+            # geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
+            # geo_response.raise_for_status()
+            # geo_data = geo_response.json()
+            # geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token, "documents")
             #except Exception as e:
             #    print(f"Uploaduploaded_file failed: {str(e)}")
 
             #Guardar info en la base de datos
             upload_file= Files()
-            upload_file.geonode_uuid = geonode_info["uuid"]
-            upload_file.geonode_id = geonode_info["id"]
+            upload_file.geonode_uuid = uuid.uuid4()
+            upload_file.geonode_id = 0
             upload_file.geonode_uuid = uuid.uuid4()
             upload_file.geonode_id = 0
             upload_file.geonode_type = "Propio"
@@ -314,7 +354,7 @@ def process_files(request, workspace, user_id):
 
             #extraer texto
             uploaded_file.seek(0)
-            extracted_text = extract_text_from_file(uploaded_file)
+            extracted_text, extracted_json_original, metadata_chunks = extract_text_from_file(uploaded_file)        
             
             # Detectar idioma
             language = embedder.detect_language(extracted_text)
@@ -335,21 +375,40 @@ def process_files(request, workspace, user_id):
             embeddings = embedder.embed_texts(chunks)    
 
             # Guardar chunks con embeddings
-            DocumentEmbedding.objects.bulk_create([
-                DocumentEmbedding(
-                    file=upload_file,
-                    chunk_index=idx,
-                    text=chunk,
-                    embedding=embedding,
-                    language=language,
-                    metadata={
-                        "source": uploaded_file.name,
-                        "content_type": uploaded_file.content_type,
-                        "chunk_size": len(chunk)
-                    }
-                )
-                for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
-            ])
+            if isinstance(extracted_text, list):
+                DocumentEmbedding.objects.bulk_create([
+                    DocumentEmbedding(
+                        file=upload_file,
+                        chunk_index=idx,
+                        text=chunk,
+                        text_json=extracted_json,
+                        metadata_json=metadata_chunk,
+                        embedding=embedding,
+                        language=language,
+                        metadata={
+                            "source": uploaded_file.name,
+                            "content_type": uploaded_file.content_type,
+                            "chunk_size": len(chunk)
+                        }
+                    )
+                    for idx, (chunk, embedding, extracted_json, metadata_chunk) in enumerate(zip(chunks, embeddings, extracted_json_original, metadata_chunks))
+                ])
+            else:
+                DocumentEmbedding.objects.bulk_create([
+                    DocumentEmbedding(
+                        file=upload_file,
+                        chunk_index=idx,
+                        text=chunk,
+                        embedding=embedding,
+                        language=language,
+                        metadata={
+                            "source": uploaded_file.name,
+                            "content_type": uploaded_file.content_type,
+                            "chunk_size": len(chunk)
+                        }
+                    )
+                    for idx, (chunk, embedding) in enumerate(zip(chunks, embeddings))
+                ])
             
             upload_file.processed = True
             #upload_file.size = os.path.getsize(filename)
