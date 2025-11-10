@@ -10,7 +10,7 @@ REGLAS ESTRICTAS:
 - Usa alias descriptivos para mejorar legibilidad
 - Siempre incluye campos relevantes para identificar registros (id, nombre, archivo, usuario, fecha, estatus, etc.)
 - La consulta debe terminar sin ningún carácter especial
-- tiene que llevar siempre este where file_id = ANY(ARRAY{list_files_json}) 
+- Incluir siempre el filtro WHERE file_id = ANY(ARRAY{list_files_json}): Todas las consultas deben incluir la condición WHERE file_id = ANY(ARRAY{list_files_json})
 
 CONVENCIONES DEL SISTEMA:
 - PostgreSQL 15.4
@@ -57,23 +57,32 @@ EJEMPLOS DE CONSULTAS:
 Q: ¿Cuántos documentos procesados tenemos?
 SQL: SELECT COUNT(*) as total_documentos 
 FROM fileuploads_documentembedding 
-WHERE (text_json->>'procesado')::boolean = TRUE
+WHERE file_id = ANY(ARRAY{list_files_json}) AND (text_json->>'procesado')::boolean = TRUE
 
 Q: Buscar documentos donde el autor tenga el nombre "Juan Pérez".
 SQL: SELECT f.id, elem->>'nombre' AS autor_nombre
 FROM fileuploads_documentembedding f,
      jsonb_array_elements(f.text_json->'autores') AS elem
-WHERE elem->>'nombre' ILIKE '%Juan Pérez%';
+WHERE file_id = ANY(ARRAY{list_files_json}) AND elem->>'nombre' ILIKE '%Juan Pérez%';
 
+Q: Buscar documentos donde el autor tenga el nombre "Juan Pérez".
+SQL:
+SELECT f.id, elem->>'nombre' AS posible_autor
+FROM fileuploads_documentembedding f,
+     jsonb_array_elements(f.text_json->'nombre') AS elem
+WHERE file_id = ANY(ARRAY{list_files_json})
+  AND elem->>'nombre' ILIKE '%Juan Pérez%';
+  
+  
 Q: ¿Cuántos documentos procesados tenemos?
 SQL: SELECT COUNT(*) AS total_documentos
 FROM fileuploads_documentembedding
-WHERE (text_json->>'procesado')::boolean = TRUE;
+WHERE file_id = ANY(ARRAY{list_files_json}) AND (text_json->>'procesado')::boolean = TRUE;
 
 Q: Buscar registros donde cualquier campo con el sufijo .nombre contenga el nombre indicado por el usuario.
 SQL: SELECT id
 FROM fileuploads_documentembedding f
-WHERE (
+WHERE file_id = ANY(ARRAY{list_files_json}) AND (
     EXISTS (
         SELECT 1 
         FROM jsonb_array_elements(f.text_json->'autores') AS elem
@@ -92,12 +101,13 @@ Ejemplo dinámico dentro del mismo patrón:
 Q: SELECT f.id, elem->>'nombre' AS autor_nombre
 FROM fileuploads_documentembedding f,
     jsonb_array_elements(f.text_json->'autores') AS elem
-WHERE elem->>'nombre' ILIKE CONCAT('%', :valor_buscado, '%');
+WHERE file_id = ANY(ARRAY{list_files_json}) AND elem->>'nombre' ILIKE CONCAT('%', :valor_buscado, '%');
 
 
 Q: Total de archivos por tipo de extensión
 SQL: SELECT f.text_json->>'extension' as extension, COUNT(*) as total_archivos 
 FROM fileuploads_documentembedding f 
+WHERE file_id = ANY(ARRAY{list_files_json})
 GROUP BY f.text_json->>'extension' 
 ORDER BY total_archivos DESC
 
@@ -115,6 +125,8 @@ FORMATO DE RESPUESTA:
 EJEMPLO CORRECTO:
 SELECT f.id, f.text_json->>'nombre_archivo' as archivo, f.text_json->>'extension' as extension 
 FROM fileuploads_documentembedding f 
-WHERE f.text_json->>'extension' = 'pdf' 
+WHERE file_id = ANY(ARRAY{list_files_json}) AND f.text_json->>'extension' = 'pdf'
 ORDER BY f.created_at DESC
+
 """
+

@@ -213,10 +213,15 @@ def chat(request):
                     
                     print("Lista de keys:", list_files_json,flush=True)
                     lista_de_keys = DocumentEmbedding.get_json_keys_with_types(list_files_json)
-                    # for row in lista_de_keys:
-                    #     print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
+                    for row in lista_de_keys:
+                        print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
                     
-                    system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=lista_de_keys, list_files_json=list_files_json)
+                    example_document_embedding = list(DocumentEmbedding.objects.filter(file_id__in=list_files_json).values_list('text_json', flat=True))
+                    system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=lista_de_keys, list_files_json=list_files_json, example=example_document_embedding)
+                    
+                    with open("prompt.txt", "w", encoding="utf-8") as f:
+                        f.write(system_prompt)
+                        
                     llm_context = payload["messages"][1]["content"]
                     url = f"{server}/api/chat"
                     sql_payload = {
@@ -261,12 +266,14 @@ def chat(request):
                         if rows_serializable:
                             # Limit sample data for insight generation
                             sample_rows = rows_serializable[:3]
+                            #sample_rows = rows_serializable
                             insight_prompt = (
                                 f"Pregunta del usuario: {llm_context}\n"
                                 f"Consulta SQL ejecutada: {sql}\n"
                                 f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
                                 f"Muestra de datos: {sample_rows}\n\n"
-                                "Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
+                                #"Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
+                                "Proporciona un resumen sin omitir ninguna información de los Resultados obtenidos."
                             )
                             
                             system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
@@ -415,6 +422,9 @@ def historyUser(request):
             payload = request.data
             get_history = History.objects.get(id=payload['chat_id'])
 
+            if(get_history.history_array is None):
+                get_history.history_array = []
+            
             serialized = serialize('json', [get_history])
             data = json.loads(serialized)[0]['fields']
             return JsonResponse(data, status=200)
