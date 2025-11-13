@@ -21,6 +21,7 @@ import requests
 import json
 import os
 from .prompts import BASE_SYSTEM_PROMPT_JSON
+from .prompts_init_aux import BASE_SYSTEM_PROMPT_KEYS
 from typing import List
 from django.db import connection
 
@@ -124,6 +125,9 @@ def chat(request):
             # Recuperar historial previo desde la base de datos
             history_obj = History.objects.get(id=payload['chat_id'])
             history_array = history_obj.history_array or []
+            
+            if(len(history_array) > 0):
+                history_array = history_array[:2]
 
             # Agregar el nuevo mensaje del usuario al final del historial
             history_array.append(payload["messages"][1])
@@ -216,21 +220,24 @@ def chat(request):
                     for row in lista_de_keys:
                         print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
                     
-                    example_document_embedding = list(DocumentEmbedding.objects.filter(file_id__in=list_files_json).values_list('text_json', flat=True))
-                    system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=lista_de_keys, list_files_json=list_files_json, example=example_document_embedding)
-                    
-                    with open("prompt.txt", "w", encoding="utf-8") as f:
-                        f.write(system_prompt)
-                        
                     llm_context = payload["messages"][1]["content"]
+                    print("Lista de keys v3:",flush=True)
+                    system_prompt_KEYS = BASE_SYSTEM_PROMPT_KEYS.format(schema=lista_de_keys, list_files_json=list_files_json)
+                    
+                    print("Lista de keys v2:",flush=True)
+                    with open("prompt_keys.txt", "w", encoding="utf-8") as f:
+                        f.write(system_prompt_KEYS)
+                    
                     url = f"{server}/api/chat"
                     sql_payload = {
                         "model": "deepseek-r1",
                         "messages": [
-                            {"role": "system", "content": system_prompt},
+                            {"role": "system", "content": system_prompt_KEYS},
                             {"role": "user", "content": llm_context},
                         ],
                         "stream": False,
+                        "temperature": 0,
+                        "think": False
                     }
                     
                     resp = requests.post(
@@ -242,51 +249,215 @@ def chat(request):
                     resp.raise_for_status()
                     data = resp.json()
                     sql = data["message"]["content"]
-                    rows = None
-                    with connection.cursor() as cursor:
-                        cursor.execute(sql)
-                        rows = cursor.fetchall()
 
-                    rows_serializable = []
-                    for row in rows:
-                        serialized_row = []
-                        for value in row:
-                            if value is None:
-                                serialized_row.append(None)
-                            else:
-                                # Convert all values to string for JSON serialization
-                                serialized_row.append(str(value))
-                        rows_serializable.append(serialized_row)
-
-                    row_count = len(rows_serializable)
-
-                    print("respuesta SQL", data["message"]["content"], flush=True)
-
-                    try:
-                        if rows_serializable:
-                            # Limit sample data for insight generation
-                            sample_rows = rows_serializable[:3]
-                            #sample_rows = rows_serializable
-                            insight_prompt = (
-                                f"Pregunta del usuario: {llm_context}\n"
-                                f"Consulta SQL ejecutada: {sql}\n"
-                                f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
-                                f"Muestra de datos: {sample_rows}\n\n"
-                                #"Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
-                                "Proporciona un resumen sin omitir ninguna información de los Resultados obtenidos."
-                            )
-                            
-                            system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
-                            
-                            updated_payload["messages"].insert(0, {
-                                "role": "system",
-                                "content": system_prompt
-                            })
+                    print("Lista de keys v3:",flush=True)
+                    with open("sql_keys.txt", "w", encoding="utf-8") as f:
+                        f.write(sql)
+                    
+                    try:    
+                        with connection.cursor() as cursor:
+                            cursor.execute(sql)
+                            rows = cursor.fetchall()
                     except Exception as e:
-                        l = 0
+                        print(f"Error al ejecutar la consulta SQL: {e}", flush=True)    
+                    
+                    print("Lista de keys v4:",rows,flush=True)
+                    rows = [k[0] for k in rows]
+                    list_reduce_keys = []
+                    for row_sql_keys in rows:
+                        for row_all_keys in lista_de_keys:
+                            if( 
+                               len(row_sql_keys.split(".")) == len(row_all_keys['key'].replace(".array.", ".").split(".")) and 
+                               row_sql_keys in row_all_keys['key'].replace(".array.", ".")
+                            ):
+                                print(f"if data", row_all_keys['key'],row_sql_keys ,  flush=True)
+                                list_reduce_keys.append(row_all_keys)   
+                    
+                    
+                    print("Lista de keys v5:", len(lista_de_keys), flush=True)
+                    print("Lista de keys v5:", len(list_reduce_keys), flush=True)
+                    for row in list_reduce_keys:
+                        print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
+                    
+                    if(len(list_reduce_keys) > 0):
+                        system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=list_reduce_keys, list_files_json=list_files_json)
+                        llm_context = payload["messages"][1]["content"]
+                                    
+                        with open("prompt.txt", "w", encoding="utf-8") as f:
+                            f.write(system_prompt)
+                    
+                        for interation in range(2): 
+                            query_error = False
+                            url = f"{server}/api/chat"
+                            sql_payload = {
+                                "model": "deepseek-r1",
+                                "messages": [
+                                    {"role": "system", "content": system_prompt},
+                                    {"role": "user", "content": llm_context},
+                                ],
+                                "stream": False,
+                                "temperature": 0,
+                                "think": False
+                            }
+                            
+                            resp = requests.post(
+                                url, 
+                                json=sql_payload, 
+                                headers={"Content-Type": "application/json"}, 
+                                timeout=500
+                            )
+                            resp.raise_for_status()
+                            data = resp.json()
+                            sql = data["message"]["content"]
+
+                            with open("sql.txt", "w", encoding="utf-8") as f:
+                                f.write(sql)
+                                
+                            rows = None
+                            try:    
+                                with connection.cursor() as cursor:
+                                    cursor.execute(sql)
+                                    rows = cursor.fetchall()
+                                    break
+                            except Exception as e:
+                                query_error = True
+                                print(f"Error al ejecutar la consulta SQL: {e}", flush=True)
+                                llm_context = (
+                                    f"Pregunta original: {payload["messages"][1]["content"]}\n"
+                                    f"El SQL '{sql}' produjo el error: {str(e)}\n"
+                                    "Corrige la consulta SQL."
+                                )    
+                                continue
+                        
+                        if(query_error):
+                            return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
+                        
+                        rows_serializable = []
+                        for row in rows:
+                            serialized_row = []
+                            for value in row:
+                                if value is None:
+                                    l = 0
+                                else:
+                                    # Convert all values to string for JSON serialization
+                                    serialized_row.append(str(value))
+                                    
+                            if(len(serialized_row) > 0):
+                                rows_serializable.append(serialized_row)
+
+                        row_count = len(rows_serializable)
+
+                        print("respuesta SQL", data["message"]["content"], flush=True)
+                        print("respuesta SQL", rows_serializable, flush=True)
+
+                        try:
+                            if row_count > 0:
+                                # Limit sample data for insight generation
+                                #sample_rows = rows_serializable[:3]
+                                sample_rows = rows_serializable[:15]
+                                
+                                insight_prompt = (
+                                    "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
+                                    "INSTRUCCIONES ESTRICTAS:\n"
+                                    "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
+                                    "- No agregues, inventes ni extrapoles información adicional.\n"
+                                    "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
+                                    "- No uses conocimiento enciclopédico o general.\n"
+                                    "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                                    "Formato esperado:\n"
+                                    "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
+                                    "Si no hay datos, responde solo con la frase indicada.\n\n"
+                                    f"Pregunta del usuario: {llm_context}\n"
+                                    #f"Consulta SQL ejecutada: {sql}\n"
+                                    f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                                    f"Muestra de datos: {sample_rows}\n\n"
+                                    #"Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
+                                    "Proporciona un resumen sin omitir ninguna información de los Resultados obtenidos., Si no tienes muestra de datos o resultados obtenidos responde: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles."
+                                )
+                                
+                                system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                                print("if system_prompt", system_prompt, flush=True)
+                                
+                                with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                    f.write(system_prompt)
+                                    
+                                #updated_payload["temperature"] = 0
+                                updated_payload["messages"].insert(0, {
+                                    "role": "system",
+                                    "content": system_prompt
+                                })
+                            else:
+                                insight_prompt = (
+                                    "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
+                                    "INSTRUCCIONES ESTRICTAS:\n"
+                                    "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
+                                    "- No agregues, inventes ni extrapoles información adicional.\n"
+                                    
+                                    "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
+                                    "- No uses conocimiento enciclopédico o general.\n"
+                                    "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                                    "Formato esperado:\n"
+                                    "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
+                                    "Si no hay datos, responde solo con la frase indicada.\n\n"
+                                    f"Pregunta del usuario: {llm_context}\n"
+                                    #f"Consulta SQL ejecutada: {sql}\n"
+                                    f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                                    f"Muestra de datos: []\n\n"
+                                    "responde que no se obtuvo respuesta en español."
+                                )
+                                
+                                system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                                print("else system_prompt", system_prompt, flush=True)
+                                
+                                with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                    f.write(system_prompt)
+                                
+                                updated_payload["messages"] = new_messages
+                                #updated_payload["messages"] = []
+                                #updated_payload["temperature"] = 0
+                                updated_payload["messages"].insert(0, {
+                                    "role": "system",
+                                    "content": system_prompt
+                                })
+                        except Exception as e:
+                            print(f"Error al ejecutar la consulta SQL: {e}", flush=True)
+                            l = 0
+                    else:
+                        insight_prompt = (
+                            "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
+                            "INSTRUCCIONES ESTRICTAS:\n"
+                            "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
+                            "- No agregues, inventes ni extrapoles información adicional.\n"
+                            "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
+                            "- No uses conocimiento enciclopédico o general.\n"
+                            "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                            "Formato esperado:\n"
+                            "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
+                            "Si no hay datos, responde solo con la frase indicada.\n\n"
+                            f"Pregunta del usuario: {llm_context}\n"
+                            #f"Consulta SQL ejecutada: {sql}\n"
+                            f"Resultados obtenidos (0 filas):\n"
+                            f"Muestra de datos: []\n\n"
+                            "responde que no se obtuvo respuesta en español."
+                        )
+                        
+                        system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                        #system_prompt = f"Eres un analista de datos experto: "
+                        print("else system_prompt", system_prompt, flush=True)
+                        
+                        with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                            f.write(system_prompt)
+                        
+                        updated_payload["messages"] = new_messages
+                        #updated_payload["temperature"] = 0
+                        #updated_payload["messages"] = []
+                        updated_payload["messages"].insert(0, {
+                            "role": "system",
+                            "content": system_prompt
+                        })
+                        
             # =================== LLAMADA A OLLAMA ===================
             print(f"[DEBUG] Enviando {len(updated_payload['messages'])} mensajes a Ollama")
-
             print("datA!!!!", updated_payload, flush=True)
             with requests.post(
                     f"{server}/api/chat",
