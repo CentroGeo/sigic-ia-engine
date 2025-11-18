@@ -139,7 +139,7 @@ EMBEDDING_MODEL = "mxbai-embed-large"  # Modelo multilingüe
 PGVECTOR_VECTOR_SIZE = 768  # Dimensión para nomic-embed-text-v2
 
 # Configuración de Celery
-CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', "amqp://guest:guest@rabbitmq:5672//")
+CELERY_BROKER_URL = os.environ.get('CELERY_BROKER_URL', "redis://redis:6379/0")
 CELERY_RESULT_BACKEND = os.environ.get('CELERY_RESULT_BACKEND', 'redis://redis:6379/0')
 CELERY_ACCEPT_CONTENT = ['application/json']
 CELERY_TASK_SERIALIZER = 'json'

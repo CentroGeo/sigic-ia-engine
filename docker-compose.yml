@@ -7,7 +7,7 @@ services:
       context: .
       args:
         BUILD_ENV: ${BUILD_ENV:-dev}
-    container_name: modulo-ia-django
+    container_name: ia-engine
     extra_hosts:
       - "host.docker.internal:host-gateway"
     volumes:
