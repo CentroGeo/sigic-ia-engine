@@ -20,18 +20,8 @@ REGLAS ABSOLUTAS:
 
 REGLA ABSOLUTA DE FILTROS:
 - Todos los filtros textuales y de patrón (ILIKE, ~*, etc.) deben combinarse con OR, nunca con AND.
-- El objetivo es devolver todas las claves que contengan *cualquiera* de los términos o patrones relevantes.
+- El objetivo es devolver todas las claves que contengan cualquiera de los términos o patrones relevantes.
 - Solo se debe usar AND para condiciones estructurales (por ejemplo: file_id, full_key IS NOT NULL).
-- Ejemplo correcto:
-    AND (
-        json_value::text ILIKE '%tesis%'
-        OR json_value::text ILIKE '%científica%'
-        OR json_value::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
-        OR full_key::text ILIKE '%tesis%'
-        OR full_key::text ILIKE '%científica%'
-        OR full_key::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
-    )
-
 
 ESTRUCTURA BASE OBLIGATORIA:
 
@@ -81,37 +71,54 @@ REGLA DE CONSTRUCCIÓN DE FILTROS DINÁMICOS (OR):
 
 - Si el usuario menciona términos o conceptos a buscar (palabras clave, frases, años, etc.),
   estos deben convertirse en condiciones adicionales dentro de paréntesis usando OR.
-  Ejemplo:
-    AND (
-        json_value::text ILIKE '%relevancia%'
-        OR json_value::text ILIKE '%relevante%'
-        OR json_value::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
-        OR full_key::text ILIKE '%relevancia%'
-        OR full_key::text ILIKE '%relevante%
-        OR full_key::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
-    )
 
-- Usa OR entre todas las condiciones relacionadas con las palabras del usuario.
 - No reemplaces ni dupliques la condición de file_id.
 - No elimines el ORDER BY full_key.
 - Si el usuario no especifica ningún término de búsqueda, genera la consulta base sin filtros adicionales.
 
-CONVENCIONES GENERALES:
+CONVENCIONES GENERALES DE TEXTO:
 
 - Usa json_value::text ILIKE '%palabra%' para coincidencias textuales.
 - Usa expresiones regulares con ~* solo para años u otros patrones numéricos.
-- Si el usuario menciona más de un grupo temático (por ejemplo: "relevancia" y "científico"),
-  agrúpalos con paréntesis:
-    AND (
-        (json_value::text ILIKE '%relevancia%' OR json_value::text ILIKE '%relevante%')
-        OR (json_value::text ILIKE '%científico%' OR json_value::text ILIKE '%científicas%')
-        OR (full_key::text ILIKE '%relevancia%' OR full_key::text ILIKE '%relevante%')
-        OR (full_key::text ILIKE '%científico%' OR full_key::text ILIKE '%científicas%')
-        
-    )
-
+- Agrupa siempre las condiciones relacionadas usando OR.
 - Todas las condiciones deben ir después de AND full_key IS NOT NULL.
-- No se permite cambiar alias, eliminar UNION ALL, ni mover partes del CTE.
+
+EXTENSIONES TEMPORALES
+Para permitir al usuario solicitar análisis como:
+- “dame la lista de autores con más registros por año”
+- “filtra por año 1999”
+- “mostrar documentos entre 2010 y 2020”
+- “cualquier dato que contenga fechas o años”
+
+Se habilita el uso de filtros OR basados en patrones temporales.
+
+PATRONES PERMITIDOS:
+- Detectar años concretos mencionados por el usuario: 1999, 2005, 2024.
+- Detectar intervalos de años mencionados por el usuario: 1990-2000, 2010–2020.
+- Casos genéricos “por año”, “por fecha”, “temporales”, “cronología”.
+
+TRADUCCIÓN A FILTROS:
+- Para año específico:
+    json_value::text ~* '\y1999\y'
+    full_key::text ~* '\y1999\y'
+
+- Para rangos:
+    json_value::text ~* '\y(199[0-9]|200[0-9])\y'
+    full_key::text ~* '\y(199[0-9]|200[0-9])\y'
+
+- Para solicitudes amplias “por año” sin rango específico:
+    json_value::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
+    full_key::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
+
+TODOS ESTOS PATRONES SE UNEN CON OR.
+
+EJEMPLO DE INYECCIÓN (NO LO INCLUYAS LITERALMENTE):
+AND (
+    json_value::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
+    OR full_key::text ~* '\y(19[0-9]{{2}}|20[0-9]{{2}})\y'
+    OR json_value::text ILIKE '%autor%'
+    OR json_value::text ILIKE '%autores%'
+)
 
 COMPORTAMIENTO ESPERADO:
 - El modelo debe devolver únicamente la consulta SQL completa, con la estructura base más las condiciones OR.

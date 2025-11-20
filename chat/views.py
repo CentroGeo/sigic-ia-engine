@@ -222,7 +222,7 @@ def chat(request):
                     
                     llm_context = payload["messages"][1]["content"]
                     print("Lista de keys v3:",flush=True)
-                    system_prompt_KEYS = BASE_SYSTEM_PROMPT_KEYS.format(schema=lista_de_keys, list_files_json=list_files_json)
+                    system_prompt_KEYS = BASE_SYSTEM_PROMPT_KEYS.format(schema=lista_de_keys,list_files_json=list_files_json)
                     
                     print("Lista de keys v2:",flush=True)
                     with open("prompt_keys.txt", "w", encoding="utf-8") as f:
@@ -280,11 +280,21 @@ def chat(request):
                         print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
                     
                     if(len(list_reduce_keys) > 0):
-                        system_prompt = BASE_SYSTEM_PROMPT_JSON.format(schema=list_reduce_keys, list_files_json=list_files_json)
-                        llm_context = payload["messages"][1]["content"]
-                                    
+                        system_prompt = BASE_SYSTEM_PROMPT_JSON.format(list_files_json=list_files_json)
+                        
+                        llm_context = f"""
+                            Metadatos disponibles (usar SOLO estos):
+                            {json.dumps(list_reduce_keys, indent=2)}
+
+                            Pregunta del usuario:
+                            {payload["messages"][1]["content"]}
+                        """
+                        
                         with open("prompt.txt", "w", encoding="utf-8") as f:
                             f.write(system_prompt)
+                        
+                        with open("llm_context.txt", "w", encoding="utf-8") as f:
+                            f.write(llm_context)
                     
                         for interation in range(2): 
                             query_error = False
@@ -309,7 +319,7 @@ def chat(request):
                             resp.raise_for_status()
                             data = resp.json()
                             sql = data["message"]["content"]
-
+                            print("SQL:", sql, flush=True)
                             with open("sql.txt", "w", encoding="utf-8") as f:
                                 f.write(sql)
                                 
@@ -359,20 +369,16 @@ def chat(request):
                                 insight_prompt = (
                                     "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
                                     "INSTRUCCIONES ESTRICTAS:\n"
-                                    "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
-                                    "- No agregues, inventes ni extrapoles información adicional.\n"
-                                    "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
-                                    "- No uses conocimiento enciclopédico o general.\n"
-                                    "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                                    "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
+                                    "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
                                     "Formato esperado:\n"
                                     "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
-                                    "Si no hay datos, responde solo con la frase indicada.\n\n"
-                                    f"Pregunta del usuario: {llm_context}\n"
-                                    #f"Consulta SQL ejecutada: {sql}\n"
+                                    "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+                                    f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
+                                    # f"Consulta SQL ejecutada: {sql}\n"
                                     f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
-                                    f"Muestra de datos: {sample_rows}\n\n"
-                                    #"Proporciona un resumen breve y útil (máximo un parrafo) sobre estos resultados en español."
-                                    "Proporciona un resumen sin omitir ninguna información de los Resultados obtenidos., Si no tienes muestra de datos o resultados obtenidos responde: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles."
+                                    f"Muestra de datos: {rows_serializable}\n\n"
+                                    "Responde en español."
                                 )
                                 
                                 system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
@@ -390,20 +396,16 @@ def chat(request):
                                 insight_prompt = (
                                     "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
                                     "INSTRUCCIONES ESTRICTAS:\n"
-                                    "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
-                                    "- No agregues, inventes ni extrapoles información adicional.\n"
-                                    
-                                    "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
-                                    "- No uses conocimiento enciclopédico o general.\n"
-                                    "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                                    "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
+                                    "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
                                     "Formato esperado:\n"
                                     "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
-                                    "Si no hay datos, responde solo con la frase indicada.\n\n"
-                                    f"Pregunta del usuario: {llm_context}\n"
-                                    #f"Consulta SQL ejecutada: {sql}\n"
+                                    "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+                                    f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
+                                    # f"Consulta SQL ejecutada: {sql}\n"
                                     f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
-                                    f"Muestra de datos: []\n\n"
-                                    "responde que no se obtuvo respuesta en español."
+                                    f"Muestra de datos: {rows_serializable}\n\n"
+                                    "Responde en español."
                                 )
                                 
                                 system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
@@ -426,19 +428,16 @@ def chat(request):
                         insight_prompt = (
                             "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
                             "INSTRUCCIONES ESTRICTAS:\n"
-                            "- Solo utiliza la información contenida en el campo 'Resultados obtenidos' o 'Muestra de datos'.\n"
-                            "- No agregues, inventes ni extrapoles información adicional.\n"
-                            "- No definas conceptos, no agregues contexto general ni explicaciones externas.\n"
-                            "- No uses conocimiento enciclopédico o general.\n"
-                            "- Usa siempre un tono analítico, directo y basado en los datos.\n\n"
+                            "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
+                            "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
                             "Formato esperado:\n"
                             "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
-                            "Si no hay datos, responde solo con la frase indicada.\n\n"
-                            f"Pregunta del usuario: {llm_context}\n"
-                            #f"Consulta SQL ejecutada: {sql}\n"
-                            f"Resultados obtenidos (0 filas):\n"
-                            f"Muestra de datos: []\n\n"
-                            "responde que no se obtuvo respuesta en español."
+                            "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+                            f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
+                            # f"Consulta SQL ejecutada: {sql}\n"
+                            f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                            f"Muestra de datos: {rows_serializable}\n\n"
+                            "Responde en español."
                         )
                         
                         system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
