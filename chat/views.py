@@ -426,7 +426,7 @@ def chat(request):
                             l = 0
                     else:
                         sql = f"""
-                            SELECT *
+                            SELECT text_json
                             FROM fileuploads_documentembedding as f
                             WHERE file_id = ANY(ARRAY{list_files_json})
                             limit 20
