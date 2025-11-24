@@ -274,7 +274,7 @@ def chat(request):
                                 list_reduce_keys.append(row_all_keys)   
                     
                     
-                    print("Lista de keys v5:", len(lista_de_keys), flush=True)
+                    #print("Lista de keys v5:", len(lista_de_keys), flush=True)
                     print("Lista de keys v5:", len(list_reduce_keys), flush=True)
                     for row in list_reduce_keys:
                         print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
@@ -357,8 +357,8 @@ def chat(request):
 
                         row_count = len(rows_serializable)
 
-                        print("respuesta SQL", data["message"]["content"], flush=True)
-                        print("respuesta SQL", rows_serializable, flush=True)
+                        #print("respuesta SQL", data["message"]["content"], flush=True)
+                        #print("respuesta SQL", rows_serializable, flush=True)
 
                         try:
                             if row_count > 0:
@@ -377,7 +377,7 @@ def chat(request):
                                     f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
                                     # f"Consulta SQL ejecutada: {sql}\n"
                                     f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
-                                    f"Muestra de datos: {rows_serializable}\n\n"
+                                    f"Muestra de datos: {sample_rows}\n\n"
                                     "Responde en español."
                                 )
                                 
@@ -425,39 +425,100 @@ def chat(request):
                             print(f"Error al ejecutar la consulta SQL: {e}", flush=True)
                             l = 0
                     else:
-                        insight_prompt = (
-                            "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
-                            "INSTRUCCIONES ESTRICTAS:\n"
-                            "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
-                            "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
-                            "Formato esperado:\n"
-                            "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
-                            "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
-                            f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
-                            # f"Consulta SQL ejecutada: {sql}\n"
-                            f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
-                            f"Muestra de datos: {rows_serializable}\n\n"
-                            "Responde en español."
-                        )
+                        sql = f"""
+                            SELECT *
+                            FROM fileuploads_documentembedding as f
+                            WHERE file_id = ANY(ARRAY{list_files_json})
+                            limit 20
+                        """
                         
-                        system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
-                        #system_prompt = f"Eres un analista de datos experto: "
-                        print("else system_prompt", system_prompt, flush=True)
-                        
-                        with open("system_prompt.txt", "w", encoding="utf-8") as f:
-                            f.write(system_prompt)
-                        
-                        updated_payload["messages"] = new_messages
-                        #updated_payload["temperature"] = 0
-                        #updated_payload["messages"] = []
-                        updated_payload["messages"].insert(0, {
-                            "role": "system",
-                            "content": system_prompt
-                        })
+                        rows = None
+                        try:    
+                            with connection.cursor() as cursor:
+                                cursor.execute(sql)
+                                rows = cursor.fetchall()
+                        except Exception as e:
+                            print(f"Error al ejecutar la consulta SQL: {e}", flush=True)    
+                                            
+                        rows_serializable = []
+                        for row in rows:
+                            serialized_row = []
+                            for value in row:
+                                if value is None:
+                                    l = 0
+                                else:
+                                    # Convert all values to string for JSON serialization
+                                    serialized_row.append(str(value))
+                                    
+                            if(len(serialized_row) > 0):
+                                rows_serializable.append(serialized_row)
+
+                        row_count = len(rows_serializable)
+
+                        if row_count > 0:
+                            # Limit sample data for insight generation
+                            #sample_rows = rows_serializable[:3]
+                            sample_rows = rows_serializable[:15]
+                            
+                            insight_prompt = (
+                                "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
+                                "INSTRUCCIONES ESTRICTAS:\n"
+                                "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
+                                "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
+                                "Formato esperado:\n"
+                                "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
+                                "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+                                f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
+                                # f"Consulta SQL ejecutada: {sql}\n"
+                                f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                                f"Muestra de datos: {sample_rows}\n\n"
+                                "Responde en español."
+                            )
+                            
+                            system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                            #print("if system_prompt", system_prompt, flush=True)
+                            
+                            with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                f.write(system_prompt)
+                                
+                            #updated_payload["temperature"] = 0
+                            updated_payload["messages"].insert(0, {
+                                "role": "system",
+                                "content": system_prompt
+                            })
+                        else:
+                            insight_prompt = (
+                                "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
+                                "INSTRUCCIONES ESTRICTAS:\n"
+                                "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
+                                "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
+                                "Formato esperado:\n"
+                                "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
+                                "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+                                f"Pregunta del usuario: {payload["messages"][1]["content"]}\n"
+                                # f"Consulta SQL ejecutada: {sql}\n"
+                                f"Resultados obtenidos ({len(rows_serializable)} filas):\n"
+                                f"Muestra de datos: {rows_serializable}\n\n"
+                                "Responde en español."
+                            )
+                            
+                            system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
+                            #print("else system_prompt", system_prompt, flush=True)
+                            
+                            with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                f.write(system_prompt)
+                            
+                            updated_payload["messages"] = new_messages
+                            #updated_payload["messages"] = []
+                            #updated_payload["temperature"] = 0
+                            updated_payload["messages"].insert(0, {
+                                "role": "system",
+                                "content": system_prompt
+                            })
                         
             # =================== LLAMADA A OLLAMA ===================
             print(f"[DEBUG] Enviando {len(updated_payload['messages'])} mensajes a Ollama")
-            print("datA!!!!", updated_payload, flush=True)
+            #print("datA!!!!", updated_payload, flush=True)
             with requests.post(
                     f"{server}/api/chat",
                     json=updated_payload,

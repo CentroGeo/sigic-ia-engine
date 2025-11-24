@@ -13,6 +13,21 @@ REGLAS ABSOLUTAS:
        f.text_json->>'campo'
 4. Para claves con puntos (ej. "a.b.c"):
        "a.b.c" → f.text_json->'a'->'b'->>'c'
+
+   Está totalmente prohibido acceder a cualquier clave que contenga ".array." 
+   mediante f.text_json->'clave' o f.text_json->>'clave'.
+   Toda clave que incluya ".array." SIEMPRE debe convertir su parte "array" en 
+   jsonb_array_elements, sin excepciones.
+
+   4.1 Cada metadato que contenga ".array." debe generar exactamente UNA condición EXISTS,
+   nunca una condición directa con ILIKE.
+
+   4.2 Si un metadato contiene ".array.", está prohibido generar varias condiciones 
+   repetidas para ese campo. Solo se permite un único EXISTS por ese campo.
+
+   4.3 Las claves con ".array." no deben ser tratadas como strings simples; 
+   nunca deben aparecer dentro de ILIKE directos.
+
 5. Usa únicamente SQL válido para PostgreSQL 15.4.
 6. Nunca generes rutas inválidas como:
        f.text_json->>'objeto'->>'subcampo'   (PROHIBIDO)
