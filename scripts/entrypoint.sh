@@ -29,10 +29,11 @@ done
 
 
 echo "Base de datos disponible, ejecutando migraciones..."
-#python manage.py makemigrations --noinput
+python manage.py makemigrations --noinput
 python manage.py migrate --noinput
 
-#python manage.py collectstatic --noinput
+echo "Recopilando archivos estáticos..."
+python manage.py collectstatic --noinput
 
 # Iniciar servidor según entorno
 if [ "${DJANGO_ENV}" = "dev" ]; then
