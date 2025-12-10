@@ -33,6 +33,14 @@ class HybridMinimumMetadataExtractor:
             "label": "Fecha de publicación",
             "required": True,
         },
+        "dateCreated": {
+            "label": "Fecha de creación",
+            "required": True,
+        },
+        "dateUpdated": {
+            "label": "Fecha de actualización",
+            "required": False,
+        },
         "resourceType": {
             "label": "Tipo de recurso",
             "required": True,
@@ -51,7 +59,7 @@ class HybridMinimumMetadataExtractor:
         },
         "subject": {
             "label": "Palabras clave",
-            "required": False,
+            "required": True,
         },
         "rights": {
             "label": "Licencia",
@@ -60,6 +68,26 @@ class HybridMinimumMetadataExtractor:
         "language": {
             "label": "Idioma",
             "required": True,
+        },
+        "resourceUrl": {
+            "label": "Página web del recurso",
+            "required": True,
+        },
+        "contactEmail": {
+            "label": "Correo de contacto",
+            "required": True,
+        },
+        "temporalCoverage": {
+            "label": "Cobertura temporal",
+            "required": False,
+        },
+        "spatialCoverage": {
+            "label": "Cobertura espacial",
+            "required": False,
+        },
+        "version": {
+            "label": "Versión del recurso",
+            "required": False,
         },
     }
 
@@ -72,6 +100,12 @@ class HybridMinimumMetadataExtractor:
         ],
         "dateIssued": [
             "¿Cuándo se publicó este documento?",
+        ],
+        "dateCreated": [
+            "¿Cuándo se creó o compiló este documento?",
+        ],
+        "dateUpdated": [
+            "¿Cuándo fue la última actualización o revisión de este documento?",
         ],
         "resourceType": [
             "Identifica el tipo de recurso descrito en el documento.",
@@ -93,6 +127,21 @@ class HybridMinimumMetadataExtractor:
         ],
         "language": [
             "¿En qué idioma está escrito el documento?",
+        ],
+        "resourceUrl": [
+            "¿Cuál es la URL o página web donde se puede consultar este documento?",
+        ],
+        "contactEmail": [
+            "¿Cuál es el correo electrónico de contacto del responsable o autor de este documento?",
+        ],
+        "temporalCoverage": [
+            "¿Qué periodo temporal cubre el contenido de este documento?",
+        ],
+        "spatialCoverage": [
+            "¿Qué área geográfica o región cubre el contenido de este documento?",
+        ],
+        "version": [
+            "¿Cuál es el número o designación de versión de este documento?",
         ],
     }
 
@@ -197,7 +246,8 @@ class HybridMinimumMetadataExtractor:
             else:
                 print(f"[METADATA] Saltando extracción PDF (modo async)")
 
-            rag_metadata = self._extract_rag_metadata(file_record)
+            # Pasar pdf_metadata a RAG para evitar extracciones redundantes
+            rag_metadata = self._extract_rag_metadata(file_record, pdf_metadata)
             logger.info("[Metadata] Metadatos RAG extraídos: %s", rag_metadata)
             print(f"[METADATA] Metadatos RAG extraídos: {len(rag_metadata)} campos")
 
@@ -250,13 +300,19 @@ class HybridMinimumMetadataExtractor:
                 reader = PdfReader(fh)
                 info = reader.metadata or {}
 
+                # Extraer fechas de creación y modificación
+                date_created = self._format_pdf_date(info.get("/CreationDate"))
+                date_updated = self._format_pdf_date(info.get("/ModDate"))
+
                 metadata.update(
                     {
                         "title": info.get("/Title", ""),
                         "description": info.get("/Subject", ""),
                         "creator": info.get("/Author", ""),
                         "publisher": info.get("/Producer", ""),
-                        "dateIssued": self._format_pdf_date(info.get("/CreationDate")),
+                        "dateIssued": date_created,  # Fecha de publicación = fecha de creación
+                        "dateCreated": date_created,  # Fecha de creación del PDF
+                        "dateUpdated": date_updated,  # Fecha de modificación del PDF
                         "language": self._detect_language_from_pdf(info),
                         "keywords_raw": info.get("/Keywords", ""),
                         "page_count": len(reader.pages),
@@ -268,7 +324,19 @@ class HybridMinimumMetadataExtractor:
 
         return metadata
 
-    def _extract_rag_metadata(self, file_record: Optional[Files]) -> Dict[str, Any]:
+    def _extract_rag_metadata(
+        self, file_record: Optional[Files], pdf_metadata: Optional[Dict[str, Any]] = None
+    ) -> Dict[str, Any]:
+        """
+        Extrae metadatos usando RAG solo para campos que no están en los metadatos del PDF.
+
+        Args:
+            file_record: Registro del archivo en la base de datos
+            pdf_metadata: Metadatos ya extraídos del PDF (opcional)
+
+        Returns:
+            Dict con metadatos extraídos mediante RAG
+        """
         if not file_record:
             logger.info("[Metadata] Sin registro de archivo, se omite RAG")
             return {}
@@ -290,10 +358,30 @@ class HybridMinimumMetadataExtractor:
             )
             return {}
 
+        # Si pdf_metadata no se proporciona, se crea un diccionario vacío
+        pdf_meta = pdf_metadata or {}
+
         for field, questions in self.RAG_QUERIES.items():
             if not questions:
                 continue
 
+            # Verificar si el metadato ya existe en PDF y tiene valor válido
+            pdf_value = pdf_meta.get(field)
+            has_valid_pdf_value = pdf_value and (
+                (isinstance(pdf_value, str) and pdf_value.strip()) or
+                (isinstance(pdf_value, list) and len(pdf_value) > 0) or
+                (not isinstance(pdf_value, (str, list)) and pdf_value)
+            )
+
+            if has_valid_pdf_value:
+                logger.info(
+                    "[Metadata] Campo %s ya existe en PDF con valor válido, se omite extracción RAG",
+                    field
+                )
+                print(f"[METADATA] Campo '{field}' ya presente en PDF, omitiendo RAG")
+                continue
+
+            # Si no hay valor en PDF, extraer mediante RAG
             context_text = "\n\n".join(text for text, _ in context_chunks[:3])
             prompt = self._build_prompt(field, context_text, questions[0])
             logger.info(
@@ -384,8 +472,10 @@ class HybridMinimumMetadataExtractor:
         if raw_value.lower() in {"no disponible", "n/a", "no data"}:
             return None
 
-        if field == "dateIssued":
+        # Campos de fecha - usar extracción de fecha
+        if field in {"dateIssued", "dateCreated", "dateUpdated"}:
             return self._extract_date(raw_value)
+
         if field == "resourceType":
             return self._classify_resource_type(raw_value)
         if field == "identifier":
@@ -398,6 +488,20 @@ class HybridMinimumMetadataExtractor:
             return self._normalize_language(raw_value)
         if field == "rights":
             return self._normalize_license(raw_value)
+
+        # Validación de URL para resourceUrl
+        if field == "resourceUrl":
+            return self._validate_url(raw_value)
+
+        # Validación de email para contactEmail
+        if field == "contactEmail":
+            return self._validate_email(raw_value)
+
+        # Campos de cobertura y versión - simplemente limpiar el texto
+        if field in {"temporalCoverage", "spatialCoverage", "version"}:
+            cleaned = raw_value.strip()
+            # Limitar longitud razonable
+            return cleaned[:500] if cleaned else None
 
         return raw_value.strip()
 
@@ -508,17 +612,95 @@ class HybridMinimumMetadataExtractor:
         text = text.strip()
         return text if text else "Todos los derechos reservados"
 
+    def _validate_url(self, text: str) -> Optional[str]:
+        """
+        Valida y limpia una URL.
+
+        Args:
+            text: Texto que posiblemente contiene una URL
+
+        Returns:
+            URL válida o None si no es válida
+        """
+        # Limpiar el texto
+        url = text.strip()
+
+        # Patrón básico para URLs HTTP/HTTPS
+        url_pattern = r'https?://[^\s<>"{}|\\^`\[\]]+[^\s<>"{}|\\^`\[\].,;:!?\)]'
+        match = re.search(url_pattern, url, re.IGNORECASE)
+
+        if match:
+            extracted_url = match.group()
+            logger.info("[Metadata] URL extraída: %s", extracted_url)
+            return extracted_url
+
+        # Si el texto parece una URL pero no tiene protocolo, agregar https://
+        if "." in url and " " not in url and len(url) < 200:
+            # Validar que tiene al menos un punto y parece un dominio
+            domain_pattern = r'^[a-zA-Z0-9][-a-zA-Z0-9.]+\.[a-zA-Z]{2,}(/.*)?$'
+            if re.match(domain_pattern, url):
+                url_with_protocol = f"https://{url}"
+                logger.info("[Metadata] URL sin protocolo, agregando https://: %s", url_with_protocol)
+                return url_with_protocol
+
+        logger.warning("[Metadata] URL no válida: %s", url)
+        return None
+
+    def _validate_email(self, text: str) -> Optional[str]:
+        """
+        Valida y extrae un correo electrónico.
+
+        Args:
+            text: Texto que posiblemente contiene un email
+
+        Returns:
+            Email válido o None si no es válido
+        """
+        # Limpiar el texto
+        email = text.strip().lower()
+
+        # Patrón de email básico
+        email_pattern = r'\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b'
+        match = re.search(email_pattern, email, re.IGNORECASE)
+
+        if match:
+            extracted_email = match.group()
+            logger.info("[Metadata] Email extraído: %s", extracted_email)
+            return extracted_email
+
+        logger.warning("[Metadata] Email no válido: %s", text)
+        return None
+
     def _merge_metadata(
         self,
         pdf_metadata: Dict[str, Any],
         rag_metadata: Dict[str, Any],
     ) -> Dict[str, Any]:
+        """
+        Combina metadatos de PDF y RAG, aplicando defaults solo para campos críticos.
+
+        Requisito #2: Si un metadato no se pudo obtener del PDF ni del RAG,
+        no se actualiza (se omite del resultado final), excepto para campos
+        críticos necesarios para GeoNode.
+
+        Args:
+            pdf_metadata: Metadatos extraídos del PDF
+            rag_metadata: Metadatos extraídos mediante RAG
+
+        Returns:
+            Dict con metadatos combinados
+        """
         merged: Dict[str, Any] = {}
+
+        # Campos críticos que SIEMPRE necesitan un valor para que GeoNode funcione
+        critical_fields = {"title", "description", "dateIssued", "resourceType",
+                          "identifier", "creator", "publisher", "rights", "language"}
 
         for field in self.METADATA_SCHEMA.keys():
             pdf_value = pdf_metadata.get(field)
             rag_value = rag_metadata.get(field)
 
+            # Lógica especial para campos específicos
             if field == "title":
                 merged[field] = self._merge_title(pdf_value, rag_value)
             elif field == "description":
@@ -527,13 +709,31 @@ class HybridMinimumMetadataExtractor:
                 merged[field] = self._merge_creators(pdf_value, rag_value)
             elif field == "subject":
                 merged[field] = self._merge_keywords(pdf_metadata.get("keywords_raw"), rag_value)
-            elif field in {"dateIssued", "identifier", "resourceType"}:
+            elif field in {"dateIssued", "dateCreated", "identifier", "resourceType"}:
                 merged[field] = rag_value or pdf_value
             else:
+                # Para el resto de campos, combinar PDF y RAG
                 merged[field] = pdf_value or rag_value
 
-            if self.METADATA_SCHEMA[field]["required"] and not merged.get(field):
-                merged[field] = self._default_value(field)
+            # Aplicar valores por defecto SOLO para campos críticos que están vacíos
+            # Requisito #2: Campos no críticos quedan sin valor si no se pudieron extraer
+            if field in critical_fields and not merged.get(field):
+                default_value = self._default_value(field)
+                if default_value is not None:
+                    merged[field] = default_value
+                    logger.info(
+                        "[Metadata] Campo crítico '%s' sin valor, usando default: %s",
+                        field, default_value
+                    )
+            # Para campos no críticos (como resourceUrl, contactEmail), si no hay valor,
+            # se omiten del diccionario merged (no se les asigna None explícitamente)
+            elif not merged.get(field) and field in merged:
+                # Si el campo está en merged pero tiene valor None/vacío, eliminarlo
+                del merged[field]
+                logger.info(
+                    "[Metadata] Campo no crítico '%s' omitido (no se pudo extraer del PDF ni RAG)",
+                    field
+                )
 
         return merged
 
@@ -592,16 +792,30 @@ class HybridMinimumMetadataExtractor:
         return unique[:10]
 
     def _default_value(self, field: str) -> Any:
+        """
+        Retorna valores por defecto para campos requeridos.
+
+        Args:
+            field: Nombre del campo
+
+        Returns:
+            Valor por defecto para el campo o None si no aplica
+        """
         defaults = {
             "title": "Documento sin título",
             "description": "Descripción no disponible",
             "dateIssued": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
+            "dateCreated": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
             "resourceType": "text",
             "identifier": str(uuid.uuid4()),
             "creator": ["Autor no especificado"],
             "publisher": "Institución no especificada",
             "rights": "Todos los derechos reservados",
             "language": "es",
+            "subject": ["general"],
+            # Los siguientes campos no tienen default razonable - retornarán None
+            # "resourceUrl": None,
+            # "contactEmail": None,
         }
         return defaults.get(field)
 
@@ -639,11 +853,19 @@ class HybridMinimumMetadataExtractor:
         metadata: Dict[str, Any],
         additional_data: Optional[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        # Only include fields that GeoNode 4.x accepts for documents
-        # Using simpler field names that are more compatible
+        """
+        Mapea metadatos extraídos a campos del API de GeoNode 4.4.x.
+
+        Args:
+            metadata: Metadatos combinados de PDF y RAG
+            additional_data: Datos adicionales opcionales
+
+        Returns:
+            Dict con payload para el API de GeoNode
+        """
         payload: Dict[str, Any] = {}
 
-        # Core metadata fields
+        # Core metadata fields - Campos principales
         if metadata.get("title"):
             payload["title"] = metadata.get("title")
 
@@ -666,11 +888,11 @@ class HybridMinimumMetadataExtractor:
             else:
                 print(f"[METADATA] Ninguna keyword válida encontrada, omitiendo campo keywords")
 
-        # Language - should be ISO code
+        # Language - ISO code
         if metadata.get("language"):
             payload["language"] = metadata.get("language")
 
-        # Attribution/credit field instead of poc
+        # Attribution/credit field (autores)
         if metadata.get("creator"):
             creators = metadata.get("creator")
             if isinstance(creators, list):
@@ -678,11 +900,71 @@ class HybridMinimumMetadataExtractor:
             else:
                 payload["attribution"] = str(creators)
 
+        # Nuevos campos del núcleo mínimo - mapeo a GeoNode 4.4.x
+
+        # Fecha de creación del documento
+        if metadata.get("dateCreated"):
+            payload["date"] = metadata.get("dateCreated")
+
+        # Fecha de actualización/modificación
+        if metadata.get("dateUpdated"):
+            # GeoNode maneja esto automáticamente, pero podemos incluirlo en metadata_only
+            payload["metadata_only"] = payload.get("metadata_only", {})
+            payload["metadata_only"]["date_updated"] = metadata.get("dateUpdated")
+
+        # URL del recurso
+        if metadata.get("resourceUrl"):
+            payload["online_url"] = metadata.get("resourceUrl")
+
+        # Correo de contacto - se puede incluir en supplemental_information o metadata
+        if metadata.get("contactEmail"):
+            contact_info = f"Contacto: {metadata.get('contactEmail')}"
+            if payload.get("supplemental_information"):
+                payload["supplemental_information"] += f"\n{contact_info}"
+            else:
+                payload["supplemental_information"] = contact_info
+
+        # Cobertura temporal - se puede expresar en supplemental_information
+        if metadata.get("temporalCoverage"):
+            temporal_info = f"Cobertura temporal: {metadata.get('temporalCoverage')}"
+            if payload.get("supplemental_information"):
+                payload["supplemental_information"] += f"\n{temporal_info}"
+            else:
+                payload["supplemental_information"] = temporal_info
+
+        # Cobertura espacial - se puede expresar en supplemental_information
+        # o usar regions si están disponibles
+        if metadata.get("spatialCoverage"):
+            spatial_info = f"Cobertura espacial: {metadata.get('spatialCoverage')}"
+            if payload.get("supplemental_information"):
+                payload["supplemental_information"] += f"\n{spatial_info}"
+            else:
+                payload["supplemental_information"] = spatial_info
+
+        # Versión del documento
+        if metadata.get("version"):
+            payload["edition"] = metadata.get("version")
+
+        # Publisher (institución responsable)
+        if metadata.get("publisher"):
+            # Agregar publisher a supplemental_information
+            publisher_info = f"Institución responsable: {metadata.get('publisher')}"
+            if payload.get("supplemental_information"):
+                payload["supplemental_information"] += f"\n{publisher_info}"
+            else:
+                payload["supplemental_information"] = publisher_info
+
+        # Rights (licencia)
+        if metadata.get("rights"):
+            payload["license"] = metadata.get("rights")
+
         # Only add additional_data if provided
         if additional_data:
             for k, v in additional_data.items():
                 if v and k not in payload:  # Don't override existing values
                     payload[k] = v
+
+        logger.info("[Metadata] Payload GeoNode construido con %d campos", len(payload))
 
         return payload
 
