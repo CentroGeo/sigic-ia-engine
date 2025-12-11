@@ -26,7 +26,7 @@ scikit-learn==1.4.2
 
 #nomic
 #sentence-transformers
-langchain
+langchain==0.3.27
 pgvector
 #psycopg2-binary
 python-dotenv
