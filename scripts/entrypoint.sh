@@ -36,13 +36,31 @@ echo "Recopilando archivos estáticos..."
 python manage.py collectstatic --noinput
 
 # Iniciar servidor según entorno
-if [ "${DJANGO_ENV}" = "prod" ]; then
-  echo "✅✅ Iniciando servidor Gunicorn para producción..."
-  exec gunicorn llm.wsgi:application \
-    --bind 0.0.0.0:8000 --timeout 600 --workers=1 --threads=2 \
-    --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
-else
+if [ "${DJANGO_ENV}" = "dev" ]; then
   echo "▶️ Iniciando servidor de desarrollo con autoreload"
-  exec python manage.py runserver 0.0.0.0:8000 --settings=$DJANGO_SETTINGS
+  exec python manage.py runserver 0.0.0.0:8001 --settings=$DJANGO_SETTINGS
+else
+  echo "⚙ Precargando modelo deepseek-r1:32b desde Ollama en el host..."
+  # Esperar a que Ollama esté disponible (máximo 30s)
+  for i in {1..30}; do
+    if curl -s http://host.docker.internal:11434 > /dev/null; then
+      echo "✅ Ollama está disponible"
+      break
+    fi
+    echo "⏳ Esperando a Ollama..."
+    sleep 1
+  done
+  # Hacer una llamada para precargar el modelo
+  curl -s http://host.docker.internal:11434/api/generate \
+    -d '{
+      "model": "deepseek-r1:32b",
+      "keep_alive": -1
+    }' > /dev/null && echo "✅ Modelo precargado"
+
+
+  echo "▶️ Iniciando servidor Gunicorn para producción..."
+  exec gunicorn llm.wsgi:application \
+    --bind 0.0.0.0:8001 --timeout 600 --workers=1 --threads=2 \
+    --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
 fi
   
