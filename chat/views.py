@@ -20,8 +20,8 @@ import threading
 import requests
 import json
 import os
-from .prompts import BASE_SYSTEM_PROMPT_JSON
-from .prompts_init_aux import BASE_SYSTEM_PROMPT_KEYS
+from .prompt_question import BASE_SYSTEM_PROMPT_JSON
+from .prompt_keys import BASE_SYSTEM_PROMPT_KEYS
 from typing import List
 from django.db import connection
 
@@ -251,7 +251,7 @@ def chat(request):
                     sql = data["message"]["content"]
 
                     print("Lista de keys v3:",flush=True)
-                    with open("sql_keys.txt", "w", encoding="utf-8") as f:
+                    with open("result_prompt_keys.txt", "w", encoding="utf-8") as f:
                         f.write(sql)
                     
                     try:    
@@ -290,10 +290,10 @@ def chat(request):
                             {payload["messages"][1]["content"]}
                         """
                         
-                        with open("prompt.txt", "w", encoding="utf-8") as f:
+                        with open("prompt_question.txt", "w", encoding="utf-8") as f:
                             f.write(system_prompt)
                         
-                        with open("llm_context.txt", "w", encoding="utf-8") as f:
+                        with open("context_question_user.txt", "w", encoding="utf-8") as f:
                             f.write(llm_context)
                     
                         for interation in range(2): 
@@ -320,7 +320,7 @@ def chat(request):
                             data = resp.json()
                             sql = data["message"]["content"]
                             print("SQL:", sql, flush=True)
-                            with open("sql.txt", "w", encoding="utf-8") as f:
+                            with open("result_question_user.txt", "w", encoding="utf-8") as f:
                                 f.write(sql)
                                 
                             rows = None
@@ -384,7 +384,7 @@ def chat(request):
                                 system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
                                 print("if system_prompt", system_prompt, flush=True)
                                 
-                                with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
                                     f.write(system_prompt)
                                     
                                 #updated_payload["temperature"] = 0
@@ -411,7 +411,7 @@ def chat(request):
                                 system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
                                 print("else system_prompt", system_prompt, flush=True)
                                 
-                                with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                                with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
                                     f.write(system_prompt)
                                 
                                 updated_payload["messages"] = new_messages
@@ -478,7 +478,7 @@ def chat(request):
                             system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
                             #print("if system_prompt", system_prompt, flush=True)
                             
-                            with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                            with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
                                 f.write(system_prompt)
                                 
                             #updated_payload["temperature"] = 0
@@ -505,7 +505,7 @@ def chat(request):
                             system_prompt = f"Eres un analista de datos experto: {insight_prompt}"
                             #print("else system_prompt", system_prompt, flush=True)
                             
-                            with open("system_prompt.txt", "w", encoding="utf-8") as f:
+                            with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
                                 f.write(system_prompt)
                             
                             updated_payload["messages"] = new_messages
