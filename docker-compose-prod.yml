@@ -25,7 +25,7 @@ services:
     build:
       context: .
       args:
-        BUILD_ENV: ${BUILD_ENV:-dev}
+        BUILD_ENV: ${BUILD_ENV:-prod}
     container_name: modulo-ia-celery
     extra_hosts:
       - "host.docker.internal:host-gateway"
