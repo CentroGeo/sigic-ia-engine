@@ -38,7 +38,7 @@ python manage.py collectstatic --noinput
 # Iniciar servidor según entorno
 if [ "${DJANGO_ENV}" = "dev" ]; then
   echo "▶️ Iniciando servidor de desarrollo con autoreload"
-  exec python manage.py runserver 0.0.0.0:8001 --settings=$DJANGO_SETTINGS
+  exec python manage.py runserver 0.0.0.0:8000 --settings=$DJANGO_SETTINGS
 else
   echo "⚙ Precargando modelo deepseek-r1:32b desde Ollama en el host..."
   # Esperar a que Ollama esté disponible (máximo 30s)
@@ -60,7 +60,7 @@ else
 
   echo "▶️ Iniciando servidor Gunicorn para producción..."
   exec gunicorn llm.wsgi:application \
-    --bind 0.0.0.0:8001 --timeout 600 --workers=1 --threads=2 \
+    --bind 0.0.0.0:8000 --timeout 600 --workers=1 --threads=2 \
     --env DJANGO_SETTINGS_MODULE=$DJANGO_SETTINGS
 fi
   
