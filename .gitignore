@@ -1,0 +1,25 @@
+# .gitignore
+__pycache__/
+*.py[cod]
+*.sqlite3
+*.log
+*.env
+#.env*
+db.sqlite3
+
+# Django static/media
+/static/
+/media/
+
+# Docker
+*.pid
+*.tar
+*.db
+*.sock
+
+# VSCode
+.vscode/
+
+# Python venv
+.venv/
+env/

@@ -1,0 +1,61 @@
+name: Django CI (Docker Compose)
+
+on:
+  push:
+    branches: [ "dev" ]
+
+jobs:
+  build-compose-deploy:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    env:
+      # Forzamos entorno de build a "dev" para instalar requirements/dev.txt
+      BUILD_ENV: dev
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # BuildKit + cache de capas para acelerar builds
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Restore build cache
+        uses: actions/cache@v4
+        with:
+          path: |
+            /tmp/.buildx-cache
+            /tmp/.buildx-cache-new
+          key: ${{ runner.os }}-buildx-${{ github.sha }}
+          restore-keys: |
+            ${{ runner.os }}-buildx-
+
+      - name: Build images (BUILD_ENV=dev)
+        run: |
+          export DOCKER_BUILDKIT=1
+          docker compose build \
+            --build-arg BUILD_ENV=${BUILD_ENV}
+
+      - name: Start only database
+        run: |
+          docker compose up -d db
+
+      - name: Wait for Postgres to be ready
+        shell: bash
+        run: |
+          # Espera a que el contenedor "db" responda
+          for i in {1..60}; do
+            if docker compose exec -T db pg_isready -U postgres >/dev/null 2>&1; then
+              echo "Postgres is ready."
+              break
+            fi
+            echo "Waiting for Postgres... ($i)"
+            sleep 2
+          done
+
+      - name: Docker cleanup
+        run: |
+          # limpiamos los recursos ya no usados
+          docker system prune -a 

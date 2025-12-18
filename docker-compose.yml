@@ -1,0 +1,80 @@
+version: '3.9'
+
+services:
+  django:
+    env_file: .env_dev
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-dev}
+    container_name: ia-engine
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+    ports:
+      - "8000:8000"
+    depends_on:
+      - db
+
+    entrypoint: sh ./scripts/entrypoint.sh
+    networks:
+      - red_geolex
+
+  celery:
+    env_file: .env_dev
+    build:
+      context: .
+      args:
+        BUILD_ENV: ${BUILD_ENV:-dev}
+    container_name: modulo-ia-celery
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - .:/app
+    depends_on:
+      - db
+    entrypoint: ["celery", "-A", "llm", "worker", "--loglevel=info"]
+    networks:
+      - red_geolex
+    restart: always
+
+  db:
+      container_name: modulo-ia-db
+      image: ankane/pgvector:latest
+      environment:
+        POSTGRES_DB: llm
+        POSTGRES_USER: postgres
+        POSTGRES_PASSWORD: postgres
+      ports:
+      - "5434:5432"
+      volumes:
+        - postgres_data:/var/lib/postgresql/data/
+        - ./initdb:/docker-entrypoint-initdb.d
+      restart: always
+      networks:
+        - red_geolex
+
+  redis:
+    image: redis:latest
+    container_name: modulo-ia-redis
+    volumes:
+      - ./scripts/redis-entrypoint.sh:/usr/local/bin/redis-entrypoint.sh:ro
+    entrypoint: ["/usr/local/bin/redis-entrypoint.sh"]
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks:
+      red_geolex:
+        aliases:
+          - redis
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+ 
+networks:
+  red_geolex:
+    name: red_geolex
+    
+#run comand
+#docker compose up --build
