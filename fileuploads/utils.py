@@ -213,13 +213,11 @@ def process_files(request, workspace, user_id):
             #filename = fs.save(uploaded_file.name, uploaded_file)
             filename = uploaded_file.name
             # Guardar el archivo geonode
-            #try:
+
             geo_response = upload_file_to_geonode(uploaded_file, token, cookie, filename)
             geo_response.raise_for_status()
             geo_data = geo_response.json()
             geonode_info = get_geonode_document_uuid(geo_data.get("url", ""), token)
-            #except Exception as e:
-            #    print(f"Uploaduploaded_file failed: {str(e)}")
 
             
             #Guardar info en la base de datos
