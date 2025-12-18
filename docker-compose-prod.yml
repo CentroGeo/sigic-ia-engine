@@ -31,8 +31,8 @@ services:
       - "host.docker.internal:host-gateway"
     volumes:
       - .:/app
-    depends_on:
-      - db
+    #depends_on:
+    #  - db
     entrypoint: ["celery", "-A", "llm", "worker", "--loglevel=info"]
     networks:
       - red_geolex
