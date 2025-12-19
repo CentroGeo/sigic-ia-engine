@@ -96,7 +96,8 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 @api_view(["POST"])
 def chat(request):
     #server = "http://host.docker.internal:11434"
-    server = ollama_server
+    # server = ollama_server
+    server = "http://10.2.5.5:11434"
     payload = request.data
 
     model = payload["model"]

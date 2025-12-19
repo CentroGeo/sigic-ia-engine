@@ -9,6 +9,7 @@ import re
 from django.utils import timezone
 from datetime import timedelta
 import os
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 logger = logging.getLogger(__name__)
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
@@ -16,7 +17,9 @@ ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:114
 class OllamaEmbedder:
     def __init__(self,
                  model_name='nomic-embed-text',
-                 host=ollama_server,
+                #  host=ollama_server,
+                #  host='http://host.docker.internal:11434',
+                host = "http://10.2.5.5:11434",
                  max_chunk_size=512,  # Tamaño máximo por chunk
                  chunk_overlap=50,  # Overlap entre chunks
                  batch_size=10,  # Número de chunks por batch
@@ -29,6 +32,14 @@ class OllamaEmbedder:
         self.chunk_overlap = chunk_overlap
         self.batch_size = batch_size
         self.max_retries = max_retries
+
+        try:
+            info = self.client.embeddings(model=self.model_name, prompt="ping")
+            logger.info("✅ Ollama GPU disponible (conectado correctamente).")
+            self.gpu_enabled = True
+        except Exception as e:
+            logger.warning(f"⚠️ Ollama GPU no detectada o inaccesible: {e}")
+            self.gpu_enabled = False
 
         # Configurar text splitter adaptativo
         self.text_splitter = RecursiveCharacterTextSplitter(
@@ -126,7 +137,7 @@ class OllamaEmbedder:
         chunks = adaptive_splitter.split_text(text)
 
         # Post-procesamiento de chunks
-        processed_chunks = []
+        processed_chunks = [] 
         for i, chunk in enumerate(chunks):
             # Limpiar chunk
             clean_chunk = chunk.strip()
@@ -172,49 +183,93 @@ class OllamaEmbedder:
 
         return sub_chunks
 
-    def embed_texts_batch(self, texts: List[str], show_progress: bool = True) -> List[np.ndarray]:
-        """Genera embeddings para una lista de textos en lotes con reintentos"""
+    # def embed_texts_batch(self, texts: List[str], show_progress: bool = True) -> List[np.ndarray]:
+    #     """Genera embeddings para una lista de textos en lotes con reintentos"""
 
+    #     if not texts:
+    #         return []
+
+    #     all_embeddings = []
+    #     total_batches = (len(texts) + self.batch_size - 1) // self.batch_size
+
+    #     for i in range(0, len(texts), self.batch_size):
+    #         batch = texts[i:i + self.batch_size]
+    #         batch_num = i // self.batch_size + 1
+
+    #         if show_progress:
+    #             logger.info(f"Procesando lote {batch_num}/{total_batches} ({len(batch)} textos)")
+
+    #         batch_embeddings = []
+    #         for text in batch:
+    #             # Verificar cache
+    #             text_hash = self._get_text_hash(text)
+    #             if text_hash in self._embedding_cache:
+    #                 batch_embeddings.append(self._embedding_cache[text_hash])
+    #                 continue
+
+    #             # Generar embedding con reintentos
+    #             embedding = self._embed_with_retry(text)
+    #             if embedding is not None:
+    #                 # Guardar en cache
+    #                 self._embedding_cache[text_hash] = embedding
+    #                 batch_embeddings.append(embedding)
+    #             else:
+    #                 logger.error(f"Falló embedding para texto de {len(text)} caracteres")
+    #                 # Usar embedding cero como fallback
+    #                 batch_embeddings.append(np.zeros(768))
+
+    #         all_embeddings.extend(batch_embeddings)
+
+    #         # Pausa entre lotes para no sobrecargar Ollama
+    #         if batch_num < total_batches:
+    #             time.sleep(0.5)
+
+    #     logger.info(f"Generados {len(all_embeddings)} embeddings exitosamente")
+    #     return all_embeddings
+
+    def embed_texts_batch(self, texts: List[str], show_progress: bool = True) -> List[np.ndarray]:
+        """Embeddings con ajuste dinámico y paralelismo"""
         if not texts:
             return []
 
+        # Ajuste dinámico de batch (si GPU activa, aumenta)
+        dynamic_batch = min(self.batch_size * (2 if self.gpu_enabled else 1), 20)
+        total_batches = (len(texts) + dynamic_batch - 1) // dynamic_batch
+
         all_embeddings = []
-        total_batches = (len(texts) + self.batch_size - 1) // self.batch_size
+        t0 = time.time()
 
-        for i in range(0, len(texts), self.batch_size):
-            batch = texts[i:i + self.batch_size]
-            batch_num = i // self.batch_size + 1
+        def process_text(text: str) -> np.ndarray:
+            text_hash = self._get_text_hash(text)
+            if text_hash in self._embedding_cache:
+                return self._embedding_cache[text_hash]
+            emb = self._embed_with_retry(text)
+            self._embedding_cache[text_hash] = emb
+            return emb
 
-            if show_progress:
-                logger.info(f"Procesando lote {batch_num}/{total_batches} ({len(batch)} textos)")
+        # Paralelizar por lotes pequeños
+        with ThreadPoolExecutor(max_workers=min(8, total_batches)) as executor:
+            futures = []
+            for i in range(0, len(texts), dynamic_batch):
+                batch = texts[i:i + dynamic_batch]
+                futures.append(executor.submit(self._process_batch, batch, i // dynamic_batch + 1, total_batches))
 
-            batch_embeddings = []
-            for text in batch:
-                # Verificar cache
-                text_hash = self._get_text_hash(text)
-                if text_hash in self._embedding_cache:
-                    batch_embeddings.append(self._embedding_cache[text_hash])
-                    continue
+            for future in as_completed(futures):
+                batch_embeddings = future.result()
+                all_embeddings.extend(batch_embeddings)
 
-                # Generar embedding con reintentos
-                embedding = self._embed_with_retry(text)
-                if embedding is not None:
-                    # Guardar en cache
-                    self._embedding_cache[text_hash] = embedding
-                    batch_embeddings.append(embedding)
-                else:
-                    logger.error(f"Falló embedding para texto de {len(text)} caracteres")
-                    # Usar embedding cero como fallback
-                    batch_embeddings.append(np.zeros(768))
-
-            all_embeddings.extend(batch_embeddings)
-
-            # Pausa entre lotes para no sobrecargar Ollama
-            if batch_num < total_batches:
-                time.sleep(0.5)
-
-        logger.info(f"Generados {len(all_embeddings)} embeddings exitosamente")
+        dt = time.time() - t0
+        logger.info(f"📈 {len(all_embeddings)} embeddings generados en {dt:.2f}s "
+                    f"(≈ {len(all_embeddings)/dt:.1f} textos/seg)")
         return all_embeddings
+    
+    def _process_batch(self, batch: List[str], batch_num: int, total_batches: int):
+        logger.info(f"🧵 Lote {batch_num}/{total_batches}: procesando {len(batch)} textos...")
+        embeddings = []
+        for text in batch:
+            emb = self._embed_with_retry(text)
+            embeddings.append(emb)
+        return embeddings
 
     def _embed_with_retry(self, text: str) -> np.ndarray:
         """Genera embedding con manejo de errores y reintentos"""
@@ -222,9 +277,9 @@ class OllamaEmbedder:
         for attempt in range(self.max_retries):
             try:
                 # Verificar longitud del texto
-                if len(text) > 8000:  # Límite conservador
-                    logger.warning(f"Texto muy largo ({len(text)} chars), truncando...")
-                    text = text[:8000]
+                if len(text) > 30000:  # Límite conservador
+                    logger.warning(f"Texto muy largo ({len(text)} chars), truncando a 30k")
+                    text = text[:30000]
 
                 response = self.client.embeddings(
                     model=self.model_name,
@@ -245,7 +300,7 @@ class OllamaEmbedder:
                     time.sleep(2 ** attempt)  # Backoff exponencial
                 else:
                     logger.error(f"Falló después de {self.max_retries} intentos")
-                    return None
+                    return np.zeros(768)
 
     def embed_texts(self, texts: List[str]) -> np.ndarray:
         """Genera embeddings para una lista de textos (interfaz compatible)"""
@@ -340,6 +395,6 @@ class OllamaEmbedder:
 embedder = OllamaEmbedder(
     max_chunk_size=512,
     chunk_overlap=50,
-    batch_size=5,  # Reducido para mejor estabilidad
-    max_retries=3
+    batch_size=150,  # Reducido para mejor estabilidad
+    max_retries=2
 )
