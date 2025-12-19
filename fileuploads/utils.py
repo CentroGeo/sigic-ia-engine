@@ -1,7 +1,7 @@
 # import textract
 import pandas as pd
 
-# import docx
+import docx
 from PyPDF2 import PdfReader
 from sentence_transformers import SentenceTransformer
 from .models import DocumentEmbedding, Files
@@ -31,7 +31,7 @@ import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import numpy as np
 # from datetime import datetime
-# from time import time
+from time import time
 
 MAX_MEMORY_MB = 100
 # MAX_JSON_ENTRIES_RAG = 1000
@@ -208,51 +208,77 @@ def extract_csv(file, file_size_mb):
 
 def extract_text_from_file(file):
     ext = file.name.lower().split(".")[-1]
+
     try:
         file.seek(0, 2)
         file_size_mb = file.tell() / (1024 * 1024)
         file.seek(0)
     except Exception:
         file_size_mb = 0
-    print(f"Tamaño detectado: {file_size_mb:.2f} MB")
 
-    # --- JSON ---
+    print(f"📦 Procesando {file.name} ({file_size_mb:.2f} MB)")
+
+    # -------- JSON --------
     if ext == "json":
         chunks, originals, metadata = [], [], []
 
         try:
-            for entry in enumerate(iter_json_entries(file, file_size_mb)):
-                # if idx >= MAX_JSON_ENTRIES:
-                #     break
-
+            for idx, entry in enumerate(iter_json_entries(file, file_size_mb)):
                 texto, meta = json_entry_to_text_and_metadata(entry)
                 if texto:
                     chunks.append(texto)
                     metadata.append(meta)
                     originals.append(entry)
 
+            print(f"🧩 JSON → {len(chunks)} chunks generados")
             return chunks, originals, metadata
 
         except Exception as e:
-            print(f"⚠️ Error procesando JSON: {e}")
-            return [], [], []
+            print(f"❌ Error procesando JSON: {e}")
+            return None
 
-    # --- PDF ---
-    if ext == "pdf":
-        reader = PdfReader(file)
-        return "\n".join(
-            page.extract_text() for page in reader.pages if page.extract_text()
-        )
-
-    # --- TXT ---
-    if ext == "txt":
-        return file.read().decode("utf-8")
-
-    # --- CSV ---
+    # -------- CSV --------
     if ext == "csv":
-        return extract_csv(file, file_size_mb)
+        chunks = extract_csv(file, file_size_mb)
+        print(f"🧩 CSV → {len(chunks)} chunks generados")
+        return chunks
 
-    return ""
+    # -------- PDF --------
+    if ext == "pdf":
+        try:
+            reader = PdfReader(file)
+            text = "\n".join(
+                page.extract_text()
+                for page in reader.pages
+                if page.extract_text()
+            )
+            return text.strip() if text.strip() else None
+        except Exception as e:
+            print(f"❌ Error procesando PDF: {e}")
+            return None
+
+    # -------- DOCX --------
+    if ext == "docx":
+        try:
+            doc = docx.Document(file)
+            text = "\n".join(p.text for p in doc.paragraphs if p.text.strip())
+            return text.strip() if text.strip() else None
+        except Exception as e:
+            print(f"❌ Error procesando DOCX: {e}")
+            return None
+
+    # -------- TXT --------
+    if ext == "txt":
+        try:
+            text = file.read().decode("utf-8").strip()
+            return text if text else None
+        except Exception as e:
+            print(f"❌ Error procesando TXT: {e}")
+            return None
+
+    # -------- NO SOPORTADO --------
+    print(f"🚫 Formato no soportado: .{ext}")
+    return None
 
 
 # def extract_text_from_file(file, group_size=5):
@@ -501,6 +527,7 @@ def get_geonode_document_uuid_by_id(
 
 
 def process_files(request, workspace, user_id):
+    start_time = time()
     uploaded_files = []
 
     if "archivos" not in request.FILES:
@@ -508,15 +535,17 @@ def process_files(request, workspace, user_id):
         return uploaded_files
 
     text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000, chunk_overlap=200, length_function=len
+        chunk_size=1000,
+        chunk_overlap=200,
+        length_function=len
     )
 
     file_type = request.POST.get("type", "archivos cargados")
 
     for uploaded_file in request.FILES.getlist("archivos"):
-        print(f"\n🚀 Procesando: {uploaded_file.name}")
+        print(f"\n🚀 Procesando archivo: {uploaded_file.name}")
 
-        # --- Crear registro ---
+        # --- Crear registro del archivo ---
         upload_file = Files(
             geonode_uuid=uuid.uuid4(),
             geonode_id=0,
@@ -532,67 +561,98 @@ def process_files(request, workspace, user_id):
         )
         upload_file.save()
 
-        # --- Extracción ---
+        # =========================
+        # 1. Extracción de contenido
+        # =========================
         uploaded_file.seek(0)
         extracted = extract_text_from_file(uploaded_file)
 
-        # -------- NORMALIZAR RESULTADO --------
+        # Limpieza defensiva (CLAVE para evitar bug)
+        chunks = []
+        json_originals = []
+        metadata_chunks = []
+        is_structured = False
+
+        # --- Normalización estricta ---
         if isinstance(extracted, tuple):
-            # JSON
+            # JSON → (chunks, originals, metadata)
             chunks, json_originals, metadata_chunks = extracted
             is_structured = True
-        elif isinstance(extracted, list):
-            # CSV
-            chunks = extracted
-            json_originals = None
-            metadata_chunks = None
-            is_structured = True
-        else:
-            # PDF / TXT
-            chunks = extracted
-            json_originals = None
-            metadata_chunks = None
-            is_structured = False
 
-        # --- Split solo si es texto plano ---
-        if not is_structured:
+        elif isinstance(extracted, list):
+            # CSV → lista de textos
+            chunks = extracted
+            is_structured = True
+
+        elif isinstance(extracted, str):
+            # PDF / TXT → texto plano
             try:
-                chunks = text_splitter.split_text(chunks)
+                chunks = text_splitter.split_text(extracted)
             except Exception as e:
-                print(f"⚠️ Error al hacer split: {e}")
+                print(f"⚠️ Error al dividir texto: {e}")
                 continue
 
-        if not chunks:
-            print("🚧 No se generaron chunks, se omite.")
+        else:
+            print("⚠️ Formato inesperado al extraer texto")
             continue
 
-        # --- Detección de idioma (muestra) ---
+        # Fuerza nueva referencia (evita contaminación entre archivos)
+        chunks = list(chunks)
+
+        if not chunks:
+            print("🚧 No se generaron chunks, se omite el archivo.")
+            continue
+
+        print(f"🧩 Chunks generados: {len(chunks)}")
+
+        # =========================
+        # 2. Detección de idioma
+        # =========================
         try:
-            language = embedder.detect_language(" ".join(chunks[:3]))
-        except Exception:
+            sample = " ".join(chunks[:3])
+            language = embedder.detect_language(sample)
+        except Exception as e:
+            print(f"⚠️ Error detectando idioma: {e}")
             language = "unknown"
 
-        # --- EMBEDDINGS CON HILOS (tu optimización) ---
-        def process_batch(batch):
+        # =========================
+        # 3. Embeddings en paralelo
+        # =========================
+        def process_batch(batch, batch_idx):
+            print(f"🧵 Batch {batch_idx + 1}: {len(batch)} chunks")
             try:
                 return embedder.embed_texts(batch)
             except Exception as e:
-                print(f"⚠️ Error en batch: {e}")
+                print(f"⚠️ Error en batch {batch_idx + 1}: {e}")
                 return [np.zeros(768) for _ in batch]
 
         batches = [
-            chunks[i : i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)
+            chunks[i:i + BATCH_SIZE]
+            for i in range(0, len(chunks), BATCH_SIZE)
         ]
+
+        print(
+            f"🚀 Paralelismo: {len(batches)} batches | "
+            f"batch_size={BATCH_SIZE} | workers={MAX_WORKERS}"
+        )
+
         all_embeddings = []
 
         with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            for future in as_completed(
-                [executor.submit(process_batch, b) for b in batches]
-            ):
+            futures = {
+                executor.submit(process_batch, batch, i): i
+                for i, batch in enumerate(batches)
+            }
+            for future in as_completed(futures):
                 all_embeddings.extend(future.result())
 
-        # --- Guardado en BD ---
+        print(f"📈 Embeddings generados: {len(all_embeddings)}")
+
+        # =========================
+        # 4. Guardado en BD
+        # =========================
         objs = []
+
         for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
             objs.append(
                 DocumentEmbedding(
@@ -617,17 +677,19 @@ def process_files(request, workspace, user_id):
         upload_file.language = language
         upload_file.save()
 
-        uploaded_files.append(
-            {
-                "name": uploaded_file.name,
-                "type": uploaded_file.content_type,
-                "path": upload_file.path,
-            }
-        )
+        uploaded_files.append({
+            "name": uploaded_file.name,
+            "type": uploaded_file.content_type,
+            "path": upload_file.path,
+        })
 
-        print(f"✅ Archivo procesado: {uploaded_file.name}")
-
+        print(f"✅ Archivo procesado correctamente: {uploaded_file.name}")
+    end_time = time()
+    elapsed = end_time - start_time
+    mins, secs = divmod(elapsed, 60)
+    print(f"✅ Procesamiento completado en {int(mins)} min {secs:.2f} s ({len(uploaded_files)} archivo/s)")
     return uploaded_files
+
 
 
 def process_files_catalog(request, workspace, user_id):
