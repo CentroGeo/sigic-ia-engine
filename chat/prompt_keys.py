@@ -38,7 +38,7 @@ WITH RECURSIVE explore AS (
       f.file_id
   FROM fileuploads_documentembedding f,
        LATERAL jsonb_each(f.text_json)
-  WHERE f.file_id = ANY(ARRAY[43])
+  WHERE f.file_id = ANY(ARRAY{list_files_json})
 
   UNION ALL
 
@@ -63,14 +63,14 @@ WITH RECURSIVE explore AS (
 )
 SELECT DISTINCT full_key
 FROM explore
-WHERE explore.file_id = ANY(ARRAY[43])
+WHERE explore.file_id = ANY(ARRAY{list_files_json})
   AND full_key IS NOT NULL
   /* Aquí se pueden añadir condiciones adicionales dentro de un único bloque AND ( ... ) usando OR */
 ORDER BY full_key
 
 REGLA DE CONSTRUCCIÓN DE FILTROS DINÁMICOS (OR):
 - El bloque WHERE debe conservar siempre las condiciones obligatorias:
-    WHERE explore.file_id = ANY(ARRAY[43])
+    WHERE explore.file_id = ANY(ARRAY{list_files_json})
       AND full_key IS NOT NULL
 - Si el usuario menciona términos o conceptos a buscar (palabras clave, frases, años, etc.), conviértelos en condiciones adicionales dentro de un **único** paréntesis añadido después de `AND full_key IS NOT NULL`, por ejemplo:
   AND (

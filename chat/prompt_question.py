@@ -63,7 +63,7 @@ REGLAS SOBRE LA ESTRUCTURA DE LA CONSULTA:
 
        SELECT f.text_json
        FROM fileuploads_documentembedding AS f
-       WHERE f.file_id = ANY(ARRAY[43])
+       WHERE f.file_id = ANY(ARRAY{list_files_json})
          AND (
              <todas las condiciones unidas por OR>
          )
@@ -74,7 +74,7 @@ REGLAS SOBRE LA ESTRUCTURA DE LA CONSULTA:
 
 REGLAS SOBRE BÚSQUEDAS Y FILTROS:
 21. La consulta DEBE incluir SIEMPRE la condición fija:
-       f.file_id = ANY(ARRAY[43])
+       f.file_id = ANY(ARRAY{list_files_json})
 22. Si la pregunta contiene palabras clave (ej. "naturaleza"), generar condiciones textuales:
        f.text_json->>'campo' ILIKE '%palabra%'
 23. Debes aplicar la búsqueda textual a TODOS los metadatos cuyo type sea "string":
