@@ -272,22 +272,33 @@ def chat(request):
                                row_sql_keys in row_all_keys['key'].replace(".array.", ".")
                             ):
                                 print(f"if data", row_all_keys['key'],row_sql_keys ,  flush=True)
-                                list_reduce_keys.append(row_all_keys)   
+                                is_array = row_all_keys['key'] != row_all_keys['key'].replace(".array.", "[].")
+                                row_all_keys['key'] = row_all_keys['key'].replace(".array.", "[].")
+                                
+                                info = {    
+                                    "key": row_all_keys['key'],
+                                    "type": row_all_keys['type'],
+                                    "count": row_all_keys['count'],
+                                    "is_array":  is_array
+                                }
+                                list_reduce_keys.append(info)   
                     
                     
                     #print("Lista de keys v5:", len(lista_de_keys), flush=True)
                     print("Lista de keys v5:", len(list_reduce_keys), flush=True)
                     for row in list_reduce_keys:
-                        print(f"{row['key']}: {row['type']} ({row['count']} filas)", flush=True)
+                        print(f"{row['key']}: {row['type']} ({row['count']} filas) ({row['is_array']})", flush=True)
                     
                     if(len(list_reduce_keys) > 0):
                         system_prompt = BASE_SYSTEM_PROMPT_JSON.format(list_files_json=list_files_json)
                         
                         llm_context = f"""
-                            Metadatos disponibles (usar SOLO estos):
+                            Metadatos disponibles (usar TODOS obligatoriamente):
+                            Cada metadato string DEBE generar una condición SQL.
+
                             {json.dumps(list_reduce_keys, indent=2)}
 
-                            Pregunta del usuario:
+                            Pregunta REAL del usuario (única fuente de términos de búsqueda):
                             {payload["messages"][1]["content"]}
                         """
                         
