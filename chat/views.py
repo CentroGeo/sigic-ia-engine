@@ -272,6 +272,7 @@ def chat(request):
                                row_sql_keys in row_all_keys['key'].replace(".array.", ".")
                             ):
                                 print(f"if data", row_all_keys['key'],row_sql_keys ,  flush=True)
+                                json_path = row_all_keys['key'].replace(".array.", ".").split(".")
                                 is_array = row_all_keys['key'] != row_all_keys['key'].replace(".array.", "[].")
                                 row_all_keys['key'] = row_all_keys['key'].replace(".array.", "[].")
                                 
@@ -279,13 +280,16 @@ def chat(request):
                                     "key": row_all_keys['key'],
                                     "type": row_all_keys['type'],
                                     "count": row_all_keys['count'],
-                                    "is_array":  is_array
+                                    "is_array":  is_array,
+                                    "json_path" : json_path,
+                                    "is_nested_depth" : len(json_path) - 1
                                 }
                                 list_reduce_keys.append(info)   
                     
                     
                     #print("Lista de keys v5:", len(lista_de_keys), flush=True)
                     print("Lista de keys v5:", len(list_reduce_keys), flush=True)
+                    print("Lista de keys v5:", list_reduce_keys)
                     for row in list_reduce_keys:
                         print(f"{row['key']}: {row['type']} ({row['count']} filas) ({row['is_array']})", flush=True)
                     
@@ -352,6 +356,7 @@ def chat(request):
                                 continue
                         
                         if(query_error):
+                            print("""Error al ejecutar la consulta SQL""", flush=True)
                             return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
                         
                         rows_serializable = []
