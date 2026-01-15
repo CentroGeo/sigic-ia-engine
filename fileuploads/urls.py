@@ -26,4 +26,7 @@ urlpatterns = [
 
     path('cache/status', views.cache_status, name='cache-status'),
     path('cache/cleanup', views.force_cache_cleanup, name='cache-cleanup'),
+
+    # Endpoint para actualizar permisos de documentos en GeoNode
+    path('documents/update-permissions', views.update_document_permissions, name='update-document-permissions'),
 ]

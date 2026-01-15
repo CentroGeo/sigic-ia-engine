@@ -4,12 +4,13 @@ from langdetect import detect
 from typing import List, Tuple, Dict, Any
 import time
 import logging
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 import re
 from django.utils import timezone
 from datetime import timedelta
 import os
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from django.conf import settings
 
 logger = logging.getLogger(__name__)
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
@@ -17,9 +18,7 @@ ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:114
 class OllamaEmbedder:
     def __init__(self,
                  model_name='nomic-embed-text',
-                #  host=ollama_server,
-                #  host='http://host.docker.internal:11434',
-                host = "http://10.2.5.5:11434",
+                 host=settings.OLLAMA_API_URL,
                  max_chunk_size=512,  # Tamaño máximo por chunk
                  chunk_overlap=50,  # Overlap entre chunks
                  batch_size=10,  # Número de chunks por batch

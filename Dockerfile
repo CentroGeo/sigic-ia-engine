@@ -35,6 +35,6 @@ RUN pip install --upgrade pip && \
 
 COPY . .
 
-EXPOSE 8001
+EXPOSE 8000
 
 ENTRYPOINT ["sh", "./scripts/entrypoint.sh"]

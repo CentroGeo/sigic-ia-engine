@@ -5,10 +5,9 @@ import docx
 from PyPDF2 import PdfReader
 from sentence_transformers import SentenceTransformer
 from .models import DocumentEmbedding, Files
-
-# from django.conf import settings
-# from django.core.files.storage import FileSystemStorage
-from langchain.text_splitter import RecursiveCharacterTextSplitter
+from django.conf import settings
+from django.core.files.storage import FileSystemStorage
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 from .embeddings_service import embedder
 
 # from requests.auth import HTTPBasicAuth
@@ -410,6 +409,12 @@ def vectorize_and_store_text(text, file_id):
 
 
 def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"):
+    print(f"[DEBUG] upload_file_to_geonode - Authorization: {authorization[:50] if authorization else 'None'}...")
+    print(f"[DEBUG] upload_file_to_geonode - File: {file.name}")
+
+    if not authorization:
+        raise ValueError("Authorization token is required but not provided")
+
     files = {
         "doc_file": (
             file.name,
@@ -417,18 +422,81 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
             getattr(file, "content_type", "application/octet-stream"),
         ),
     }
-    data = {"title": title}
-    headers = {"Authorization": authorization, "Accept": "application/json"}
+    data = {
+        "title": title,
+        "metadata_only": "false"
+    }
+    headers = {
+        "Authorization": authorization,
+        "Accept": "application/json"
+    }
 
-    geonode_base_url = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx")
+    geonode_base_url = os.getenv("GEONODE_SERVER", "https://geonode.dev.geoint.mx").rstrip('/')
     upload_url = f"{geonode_base_url}/documents/upload?no__redirect=true"
 
-    # time.sleep(1)
+    print(f"[DEBUG] Uploading to: {upload_url}")
 
-    response = requests.post(upload_url, data=data, files=files, headers=headers)
-    print("GeoNode upload response:", response.status_code, response.text)
+    # Upload the file first
+    response = requests.post(
+        upload_url,
+        data=data,
+        files=files,
+        headers=headers
+    )
+    print(f"[DEBUG] GeoNode upload response: {response.status_code}")
+    if response.status_code >= 400:
+        print(f"[ERROR] GeoNode upload failed: {response.text}")
+        return response
+
+    # If upload successful, set permissions to make document public
+    if response.status_code in [200, 201]:
+        try:
+            response_data = response.json()
+            doc_url = response_data.get("url", "")
+            doc_id = doc_url.strip("/").split("/")[-1]
+            print(f"[DEBUG] Document uploaded with ID: {doc_id}, now setting public permissions...")
+
+            # Set permissions using GeoNode 4.x API
+            # Use the simpler format with groups for anonymous access
+            permissions_url = f"{geonode_base_url}/api/v2/resources/{doc_id}/permissions"
+
+            # Try to set permissions using groups (anonymous group typically has ID 1 or 2)
+            # This makes the document publicly viewable
+            permissions_payload = {
+                "groups": [
+                    {
+                        "id": 1,  # anonymous group ID (typically 1 or 2)
+                        "permissions": "view"
+                    }
+                ]
+            }
+
+            perm_headers = {
+                "Authorization": authorization,
+                "Content-Type": "application/json",
+                "Accept": "application/json"
+            }
+
+            print(f"[DEBUG] Permissions payload: {permissions_payload}")
+            perm_response = requests.put(
+                permissions_url,
+                json=permissions_payload,
+                headers=perm_headers,
+                timeout=10
+            )
+
+            print(f"[DEBUG] Permissions update response: {perm_response.status_code}")
+            if perm_response.status_code not in [200, 201, 204]:
+                print(f"[WARNING] Failed to set public permissions: {perm_response.text[:500]}")
+            else:
+                print(f"[SUCCESS] Document {doc_id} is now publicly accessible")
+
+        except Exception as e:
+            print(f"[ERROR] Exception while setting permissions: {str(e)}")
+            # Don't fail the upload if permission setting fails
+            pass
+
     return response
-
 
 def upload_image_to_geonode(file, filename, token=""):
     file_bytes = file.read()
@@ -524,7 +592,6 @@ def get_geonode_document_uuid_by_id(
 
     except Exception as e:
         raise ValueError(f"No se pudo obtener el UUID del documento: {str(e)}")
-
 
 def process_files(request, workspace, user_id):
     start_time = time()

@@ -24,6 +24,8 @@ from .prompt_question import BASE_SYSTEM_PROMPT_JSON
 from .prompt_keys import BASE_SYSTEM_PROMPT_KEYS
 from typing import List
 from django.db import connection
+from django.conf import settings
+import os
 
 llm_lock: threading.Lock = threading.Lock()
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
@@ -95,9 +97,7 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 )
 @api_view(["POST"])
 def chat(request):
-    #server = "http://host.docker.internal:11434"
-    # server = ollama_server
-    server = "http://10.2.5.5:11434"
+    server = settings.OLLAMA_API_URL
     payload = request.data
 
     model = payload["model"]
@@ -540,7 +540,7 @@ def chat(request):
                     f"{server}/api/chat",
                     json=updated_payload,
                     headers={"Content-Type": "application/json"},
-                    timeout=500,
+                    timeout=int(os.environ.get("OLLAMA_TIMEOUT", 600)),
                     stream=True
             ) as resp:
                 resp.raise_for_status()
@@ -821,7 +821,7 @@ def generate_chat_title(server_url: str, question: str, answer: str, model_name:
             f"{server_url}/api/chat",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=30
+            timeout = int(os.environ.get("OLLAMA_TIMEOUT", 600)),
         )
         response.raise_for_status()
         title_data = response.json()
