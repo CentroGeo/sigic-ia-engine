@@ -601,11 +601,7 @@ def process_files(request, workspace, user_id):
         print("⚠️ No se encontraron archivos.")
         return uploaded_files
 
-    text_splitter = RecursiveCharacterTextSplitter(
-        chunk_size=1000,
-        chunk_overlap=200,
-        length_function=len
-    )
+
 
     file_type = request.POST.get("type", "archivos cargados")
 
@@ -613,6 +609,44 @@ def process_files(request, workspace, user_id):
         print(f"\n🚀 Procesando archivo: {uploaded_file.name}")
 
         # --- Crear registro del archivo ---
+        # Asegurar que el directorio existe
+        relative_path = os.path.join("uploads/proyectos", str(workspace.id))
+        full_dir = os.path.join(settings.MEDIA_ROOT, relative_path)
+        os.makedirs(full_dir, exist_ok=True)
+        
+        # Guardar archivo físicamente
+        file_path = os.path.join(full_dir, uploaded_file.name)
+        
+        # Escribir contenido (streaming para no saturar RAM)
+        with open(file_path, 'wb+') as destination:
+            for chunk in uploaded_file.chunks():
+                destination.write(chunk)
+                
+        # Ruta relativa para el modelo (dependiendo de cómo se sirvan los media)
+        # El modelo usa 'path' como TextField, asumiremos que guarda path absoluto o relativo
+        # El código original usaba: os.path.join("uploads/proyectos", str(workspace.id), uploaded_file.name)
+        # que es relativo. Mantendremos eso apuntando al path relativo si es lo que se espera,
+        # PERO para el task necesitamos saber dónde está. El task usa file_record.path.
+        # Si file_record.path es relativo, el task debe saber el root.
+        # El código original: path=os.path.join(...)
+        # Entonces guardaremos path absoluto en el modelo o relativo?
+        # Original: path=os.path.join("uploads/proyectos", str(workspace.id), uploaded_file.name)
+        # Esto es relativo.
+        # Para que el task lo encuentre, debe combinar MEDIA_ROOT + path.
+        # Ajustaré el task luego si es necesario, pero mejor guardo el path absoluto si puedo, 
+        # O guardo el relativo y dejo que el task use MEDIA_ROOT.
+        # Por compatibilidad, dejemos el path como estaba (relativo) y aseguremos que el archivo esté allí.
+        
+        # Actualización: guardemos path completo en el modelo para evitar ambigüedad en el task
+        # O si el modelo espera relativo, usaremos relativo.
+        # Original: path = os.path.join("uploads/proyectos", str(workspace.id), uploaded_file.name)
+        # Eso parece relativo al CWD o MEDIA_ROOT. 
+        # Usaremos `file_path` (absoluto) para escritura, pero guardaremos `saved_path` (relativo) en BD
+        # si es lo que se usaba. 
+        
+        # Revisando models.user_file_path: os.path.join('uploads', 'workspaces', ...)
+        # Usaremos el path absoluto para asegurar que el worker lo encuentre.
+        
         upload_file = Files(
             geonode_uuid=uuid.uuid4(),
             geonode_id=0,
@@ -621,133 +655,24 @@ def process_files(request, workspace, user_id):
             user_id=user_id,
             filename=uploaded_file.name,
             document_type=uploaded_file.content_type,
-            path=os.path.join(
-                "uploads/proyectos", str(workspace.id), uploaded_file.name
-            ),
+            path=file_path, # Guardamos ruta absoluta para que el worker no tenga dudas
             workspace=workspace,
+            processed=False # Indicador explícito (si existiera campo, sino se asume false)
         )
         upload_file.save()
+        
+        print(f"💾 Archivo guardado en disco: {file_path}")
 
-        # =========================
-        # 1. Extracción de contenido
-        # =========================
-        uploaded_file.seek(0)
-        extracted = extract_text_from_file(uploaded_file)
-
-        # Limpieza defensiva (CLAVE para evitar bug)
-        chunks = []
-        json_originals = []
-        metadata_chunks = []
-        is_structured = False
-
-        # --- Normalización estricta ---
-        if isinstance(extracted, tuple):
-            # JSON → (chunks, originals, metadata)
-            chunks, json_originals, metadata_chunks = extracted
-            is_structured = True
-
-        elif isinstance(extracted, list):
-            # CSV → lista de textos
-            chunks = extracted
-            is_structured = True
-
-        elif isinstance(extracted, str):
-            # PDF / TXT → texto plano
-            try:
-                chunks = text_splitter.split_text(extracted)
-            except Exception as e:
-                print(f"⚠️ Error al dividir texto: {e}")
-                continue
-
-        else:
-            print("⚠️ Formato inesperado al extraer texto")
-            continue
-
-        # Fuerza nueva referencia (evita contaminación entre archivos)
-        chunks = list(chunks)
-
-        if not chunks:
-            print("🚧 No se generaron chunks, se omite el archivo.")
-            continue
-
-        print(f"🧩 Chunks generados: {len(chunks)}")
-
-        # =========================
-        # 2. Detección de idioma
-        # =========================
-        try:
-            sample = " ".join(chunks[:3])
-            language = embedder.detect_language(sample)
-        except Exception as e:
-            print(f"⚠️ Error detectando idioma: {e}")
-            language = "unknown"
-
-        # =========================
-        # 3. Embeddings en paralelo
-        # =========================
-        def process_batch(batch, batch_idx):
-            print(f"🧵 Batch {batch_idx + 1}: {len(batch)} chunks")
-            try:
-                return embedder.embed_texts(batch)
-            except Exception as e:
-                print(f"⚠️ Error en batch {batch_idx + 1}: {e}")
-                return [np.zeros(768) for _ in batch]
-
-        batches = [
-            chunks[i:i + BATCH_SIZE]
-            for i in range(0, len(chunks), BATCH_SIZE)
-        ]
-
-        print(
-            f"🚀 Paralelismo: {len(batches)} batches | "
-            f"batch_size={BATCH_SIZE} | workers={MAX_WORKERS}"
-        )
-
-        all_embeddings = []
-
-        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
-            futures = {
-                executor.submit(process_batch, batch, i): i
-                for i, batch in enumerate(batches)
-            }
-            for future in as_completed(futures):
-                all_embeddings.extend(future.result())
-
-        print(f"📈 Embeddings generados: {len(all_embeddings)}")
-
-        # =========================
-        # 4. Guardado en BD
-        # =========================
-        objs = []
-
-        for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
-            objs.append(
-                DocumentEmbedding(
-                    file=upload_file,
-                    chunk_index=idx,
-                    text=chunk,
-                    text_json=json_originals[idx] if json_originals else None,
-                    metadata_json=metadata_chunks[idx] if metadata_chunks else None,
-                    embedding=embedding,
-                    language=language,
-                    metadata={
-                        "source": uploaded_file.name,
-                        "content_type": uploaded_file.content_type,
-                        "chunk_size": len(chunk),
-                    },
-                )
-            )
-
-        DocumentEmbedding.objects.bulk_create(objs, batch_size=500)
-
-        upload_file.processed = True
-        upload_file.language = language
-        upload_file.save()
+        # --- Encolar tarea asíncrona ---
+        from .tasks import process_file_rag_async
+        process_file_rag_async.delay(upload_file.id)
+        print(f"🚀 Tarea RAG encolada para File ID: {upload_file.id}")
 
         uploaded_files.append({
             "name": uploaded_file.name,
             "type": uploaded_file.content_type,
             "path": upload_file.path,
+            "status": "queued"
         })
 
         print(f"✅ Archivo procesado correctamente: {uploaded_file.name}")

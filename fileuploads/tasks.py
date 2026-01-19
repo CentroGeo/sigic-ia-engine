@@ -121,3 +121,135 @@ def update_geonode_metadata_task(
             'reason': 'exception',
             'message': str(e)
         }
+@shared_task(bind=True, name='fileuploads.process_file_rag_async', ignore_result=True)
+def process_file_rag_async(self, file_id: int):
+    """
+    Tarea asíncrona para procesar la ingesta RAG de un archivo.
+    Realiza:
+    1. Extracción de texto
+    2. Detección de idioma
+    3. Smart Chunking
+    4. Generación de Embeddings
+    5. Guardado en Vector DB
+    """
+    from .models import Files, DocumentEmbedding
+    from .utils import extract_text_from_file
+    from .embeddings_service import embedder
+    import numpy as np
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+    from django.core.files.storage import default_storage
+    
+    print(f"[CELERY-RAG] Iniciando procesamiento async para File ID: {file_id}")
+    
+    try:
+        file_record = Files.objects.get(id=file_id)
+        
+        # Verificar existencia física
+        if not os.path.exists(file_record.path):
+            print(f"[CELERY-RAG] ERROR: Archivo no encontrado en disco: {file_record.path}")
+            return
+            
+        print(f"[CELERY-RAG] Procesando archivo físico: {file_record.path}")
+        
+        # 1. Extracción de texto
+        # Necesitamos abrir el archivo como objeto file-like para extract_text_from_file
+        with open(file_record.path, 'rb') as f:
+            # Simular objeto con atributo name para que extract_text_from_file detecte extensión
+            # OJO: extract_text_from_file usa file.name.lower().split(".")
+            # Creamos un wrapper o usamos el objeto file directamente si tiene name
+            if not hasattr(f, 'name') or not f.name:
+                # Fallback, aunque open() usualmente setea name
+                pass
+                
+            extracted = extract_text_from_file(f)
+            
+        chunks = []
+        json_originals = []
+        metadata_chunks = []
+        
+        # Lógica de normalización (copiada de utils.process_files refactorizado)
+        if isinstance(extracted, tuple):
+            chunks, json_originals, metadata_chunks = extracted
+            # Detección idioma JSON
+            try:
+                sample = " ".join(chunks[:3])
+                language = embedder.detect_language(sample)
+            except:
+                language = "es"
+                
+        elif isinstance(extracted, list):
+            chunks = extracted
+            # Detección idioma CSV
+            try:
+                sample = " ".join(chunks[:3])
+                language = embedder.detect_language(sample)
+            except:
+                language = "es"
+                
+        elif isinstance(extracted, str):
+            try:
+                language = embedder.detect_language(extracted)
+                chunks = embedder._smart_text_splitting(extracted, language)
+                print(f"[CELERY-RAG] Smart Chunking: {len(chunks)} chunks ({language})")
+            except Exception as e:
+                print(f"[CELERY-RAG] Error en splitting: {e}")
+                chunks = []
+        else:
+            chunks = []
+            
+        if not chunks:
+            print("[CELERY-RAG] No se generaron chunks. Abortando.")
+            return
+
+        # 3. Embeddings (Paralelismo)
+        BATCH_SIZE = 150
+        MAX_WORKERS = 12
+        
+        def process_batch(batch, batch_idx):
+            try:
+                return embedder.embed_texts(batch)
+            except Exception as e:
+                print(f"[CELERY-RAG] Error batch {batch_idx}: {e}")
+                return [np.zeros(768) for _ in batch]
+
+        batches = [chunks[i:i + BATCH_SIZE] for i in range(0, len(chunks), BATCH_SIZE)]
+        all_embeddings = []
+        
+        with ThreadPoolExecutor(max_workers=MAX_WORKERS) as executor:
+            futures = {executor.submit(process_batch, batch, i): i for i, batch in enumerate(batches)}
+            for future in as_completed(futures):
+                all_embeddings.extend(future.result())
+                
+        # 4. Guardado
+        objs = []
+        for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
+            objs.append(
+                DocumentEmbedding(
+                    file=file_record,
+                    chunk_index=idx,
+                    text=chunk,
+                    text_json=json_originals[idx] if json_originals else None,
+                    metadata_json=metadata_chunks[idx] if metadata_chunks else None,
+                    embedding=embedding,
+                    language=language,
+                    metadata={
+                        "source": file_record.filename,
+                        "content_type": file_record.document_type,
+                        "chunk_size": len(chunk),
+                        "smart_chunking": True
+                    },
+                )
+            )
+            
+        DocumentEmbedding.objects.bulk_create(objs, batch_size=500)
+        
+        file_record.processed = True
+        file_record.language = language
+        file_record.save()
+        
+        print(f"[CELERY-RAG] Finalizado con éxito File ID: {file_id}")
+
+    except Exception as e:
+        print(f"[CELERY-RAG] CRITICAL ERROR: {str(e)}")
+        import traceback
+        traceback.print_exc()

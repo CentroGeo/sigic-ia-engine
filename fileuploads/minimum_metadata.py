@@ -6,6 +6,7 @@ from tempfile import NamedTemporaryFile
 from typing import Any, Dict, List, Optional, Tuple
 
 import ollama
+import os 
 import requests
 from PyPDF2 import PdfReader
 from pgvector.django import L2Distance
@@ -140,7 +141,7 @@ class HybridMinimumMetadataExtractor:
         geonode_base_url: str,
         authorization: str,
         cookie: Optional[str] = None,
-        llm_model: str = "llama3.1",
+        llm_model: str = os.getenv("OLLAMA_MODEL", "llama3.1"),
         ollama_host: str = settings.OLLAMA_API_URL,
     ) -> None:
         self.geonode_base_url = geonode_base_url.rstrip("/")
@@ -280,9 +281,7 @@ class HybridMinimumMetadataExtractor:
             document_uuid,
         )
 
-        rag_metadata: Dict[str, Any] = {}
         context_chunks = self._retrieve_context_chunks(file_record)
-
         if not context_chunks:
             logger.info(
                 "[Metadata] Sin chunks de contexto disponibles para RAG (file_id=%s)",
@@ -290,29 +289,26 @@ class HybridMinimumMetadataExtractor:
             )
             return {}
 
-        for field, questions in self.RAG_QUERIES.items():
-            if not questions:
-                continue
-
-            context_text = "\n\n".join(text for text, _ in context_chunks[:3])
-            prompt = self._build_prompt(field, context_text, questions[0])
-            logger.info(
-                "[Metadata] Prompt generado para %s: %s",
-                field,
-                prompt[:200],
-            )
-            response = self._invoke_llm(prompt)
-
-            if response:
-                logger.info("[Metadata] Respuesta LLM %s: %s", field, response)
-                processed = self._postprocess_field(field, response)
-                if processed:
-                    rag_metadata[field] = processed
-                    logger.info("[Metadata] Campo RAG procesado %s: %s", field, processed)
+        # Construir contexto único
+        context_text = "\n\n".join(text for text, _ in context_chunks)
+        
+        # Generar prompt único para JSON
+        prompt = self._build_json_prompt(context_text)
+        
+        logger.info("[Metadata] Prompt JSON generado (len=%d)", len(prompt))
+        
+        # Invocar LLM una sola vez
+        json_response = self._invoke_llm(prompt, json_mode=True)
+        
+        # Parsear respuesta
+        rag_metadata = self._parse_json_response(json_response)
+        logger.info(f"[Metadata] Metadatos extraídos vía JSON: {rag_metadata}")
 
         return rag_metadata
 
     def _retrieve_context_chunks(self, file_record: Files, limit: int = 8) -> List[Tuple[str, float]]:
+        from .embeddings_service import ranker
+        
         base_query = "contenido principal documento metadatos información"
         query_embedding = embedder.embed_query(base_query)
 
@@ -320,55 +316,85 @@ class HybridMinimumMetadataExtractor:
             logger.info("[Metadata] Embedder sin respuesta para consulta base")
             return []
 
+        # 1. Recuperación Densa (Candidate Generation)
+        # Traemos más candidatos para re-rankear
+        candidate_limit = limit * 3
+        
         embeddings_qs = (
             DocumentEmbedding.objects.filter(file=file_record)
             .annotate(distance=L2Distance("embedding", query_embedding.tolist()))
-            .order_by("distance")[:limit]
+            .order_by("distance")[:candidate_limit]
         )
 
-        embeddings_list = list(embeddings_qs)
+        candidates = list(embeddings_qs)
+        if not candidates:
+             return []
+             
+        # 2. Re-ranking (Cross-Encoder)
+        logger.info(f"[Metadata] Re-rankeando {len(candidates)} candidatos...")
+        candidate_texts = [item.text for item in candidates]
+        
+        ranked_indices = ranker.rank(base_query, candidate_texts, top_k=limit)
+        
+        # Reconstruir lista ordenada
+        final_chunks = []
+        for idx, score in ranked_indices:
+            # Usamos el score del ranker como "distancia inversa" (mayor es mejor)
+            final_chunks.append((candidates[idx].text, float(score)))
+            
         logger.info(
-            "[Metadata] Chunks recuperados para file_id=%s: %s/%s",
+            "[Metadata] Chunks recuperados y re-rankeados para file_id=%s: %s/%s",
             getattr(file_record, "pk", None),
-            len(embeddings_list),
+            len(final_chunks),
             limit,
         )
 
-        return [(item.text, float(item.distance or 0)) for item in embeddings_list]
+        return final_chunks
 
-    def _build_prompt(self, field: str, context: str, question: str) -> str:
-        if field == "description":
-            return (
-                "Basado en el siguiente contexto, redacta un resumen ejecutivo conciso "
-                "(120-200 palabras).\n\nCONTEXTO:\n"
-                f"{context}\n\nPREGUNTA: {question}\n\nRESPUESTA:"
-            )
-
-        if field == "subject":
-            return (
-                "A partir del contexto, identifica de cinco a diez palabras clave relevantes. "
-                "Devuélvelas como una lista separada por comas.\n\nCONTEXTO:\n"
-                f"{context}\n\nPREGUNTA: {question}\n\nRESPUESTA:"
-            )
-
+    def _build_json_prompt(self, context: str) -> str:
         return (
-            "Responde la pregunta de forma directa usando solo la información del contexto. "
-            "Si no hay datos suficientes, responde 'No disponible'.\n\nCONTEXTO:\n"
-            f"{context}\n\nPREGUNTA: {question}\n\nRESPUESTA:"
+            "Eres un experto en biblioteconomía y análisis documental. "
+            "Tu tarea es extraer metadatos de un documento basándote en el siguiente fragmento de texto.\n"
+            "Analiza el texto y extrae la información en formato JSON estricto.\n\n"
+            "CAMPOS REQUERIDOS (JSON):\n"
+            "- title: Título principal del documento.\n"
+            "- description: Un resumen ejecutivo de 100-150 palabras.\n"
+            "- dateIssued: Fecha de publicación (YYYY-MM-DD) o 'No disponible'.\n"
+            "- resourceType: Tipo de recurso (report, map, dataset, article, etc.).\n"
+            "- identifier: Identificadores como DOI, ISBN (o 'No disponible').\n"
+            "- creator: Lista de autores o instituciones creadoras.\n"
+            "- publisher: Entidad que publica el documento.\n"
+            "- subject: Lista de 5 a 10 palabras clave relevantes.\n"
+            "- rights: Licencia o términos de uso (ej. 'CC-BY', 'Copyright').\n"
+            "- language: Idioma principal (es, en, fr, etc.).\n\n"
+            "CONTEXTO DEL DOCUMENTO:\n"
+            f"{context}\n\n"
+            "Responde ÚNICAMENTE con el objeto JSON válido. No incluyas explicaciones previas ni posteriores."
         )
 
-    def _invoke_llm(self, prompt: str) -> str:
+    def _invoke_llm(self, prompt: str, json_mode: bool = False) -> str:
         try:
-            print(f"[METADATA] Llamando a Ollama con modelo {self.llm_model}...")
-            result = self.ollama_client.generate(
-                model=self.llm_model,
-                prompt=prompt,
-                options={
-                    "temperature": 0.1,
-                    "top_p": 0.9,
-                    "max_tokens": 300,
-                },
-            )
+            print(f"[METADATA] Llamando a Ollama con modelo {self.llm_model} (JSON_MODE={json_mode})...")
+            
+            options = {
+                "temperature": 0.1,
+                "top_p": 0.9,
+                "max_tokens": 1000,  # Aumentado para respuesta JSON completa
+            }
+            
+            # Preparar argumentos
+            generate_kwargs = {
+                "model": self.llm_model,
+                "prompt": prompt,
+                "options": options,
+                "stream": False
+            }
+            
+            if json_mode:
+                generate_kwargs["format"] = "json"
+
+            result = self.ollama_client.generate(**generate_kwargs)
+            
             response = result.get("response", "").strip()
             print(f"[METADATA] Respuesta de Ollama recibida: {len(response)} caracteres")
             return response
@@ -377,9 +403,63 @@ class HybridMinimumMetadataExtractor:
             print(f"[METADATA] ERROR Ollama: {str(exc)}")
             return ""
 
-    def _postprocess_field(self, field: str, raw_value: str) -> Any:
-        if not raw_value:
+    def _parse_json_response(self, json_text: str) -> Dict[str, Any]:
+        """Parsea la respuesta JSON y aplica post-procesamiento."""
+        import json
+        
+        if not json_text:
+            return {}
+
+        try:
+            # Limpiar posible markdown wrapper como ```json ... ```
+            clean_text = json_text.strip()
+            if clean_text.startswith("```json"):
+                clean_text = clean_text[7:]
+            if clean_text.endswith("```"):
+                clean_text = clean_text[:-3]
+            
+            data = json.loads(clean_text)
+            
+            if not isinstance(data, dict):
+                logger.warning("Respuesta JSON no es un objeto dict")
+                return {}
+
+            processed_data = {}
+            
+            # Post-procesar cada campo usando la lógica existente
+            for field, value in data.items():
+                if field in self.METADATA_SCHEMA:
+                    # Convertir listas a strings para el post-procesador si es necesario
+                    if isinstance(value, list) and field not in ["creator", "subject"]:
+                         value = ", ".join(map(str, value))
+                    
+                    processed = self._postprocess_field(field, str(value) if value is not None else "")
+                    if processed:
+                        processed_data[field] = processed
+            
+            return processed_data
+
+        except json.JSONDecodeError as e:
+            logger.error(f"Error decodificando JSON del LLM: {e}")
+            print(f"[METADATA] Error JSON: {e}")
+            return {}
+
+
+    def _postprocess_field(self, field: str, raw_value: Any) -> Any:
+        if raw_value is None:
             return None
+
+        # Si ya es una lista (caso JSON), evitar procesamiento de string innecesario
+        if isinstance(raw_value, list):
+             if field == "creator":
+                 return self._extract_creators(raw_value)
+             if field == "subject":
+                 return self._extract_keywords(raw_value)
+             # Para otros campos, convertir lista a string
+             raw_value = ", ".join(map(str, raw_value))
+
+        if not isinstance(raw_value, str):
+            raw_value = str(raw_value)
 
         if raw_value.lower() in {"no disponible", "n/a", "no data"}:
             return None
@@ -447,7 +527,13 @@ class HybridMinimumMetadataExtractor:
 
         return str(uuid.uuid4())
 
-    def _extract_creators(self, text: str) -> List[str]:
+    def _extract_creators(self, value: Any) -> List[str]:
+        # Si ya viene como lista del JSON
+        if isinstance(value, list):
+             authors = [str(a).strip() for a in value if a and str(a).strip()]
+             return authors[:5] if authors else ["Autor no especificado"]
+
+        text = str(value)
         authors: List[str] = []
         patterns = [
             r"(?:autor|author|por|by):\s*([^\.\n]+)",
@@ -467,19 +553,28 @@ class HybridMinimumMetadataExtractor:
 
         return authors[:5] if authors else ["Autor no especificado"]
 
-    def _extract_keywords(self, text: str) -> List[str]:
-        candidates: List[str] = []
-        patterns = [
-            r"\d+\.\s*([^,\n.]+)",
-            r"-\s*([^,\n.]+)",
-            r"•\s*([^,\n.]+)",
-            r",\s*([^,\n.]+)",
-            r":\s*([^,\n.]+)",
-        ]
+    def _extract_keywords(self, value: Any) -> List[str]:
+        # Si ya viene como lista del JSON
+        if isinstance(value, list):
+            candidates = [str(k).strip().lower() for k in value]
+        else:
+            text = str(value)
+            candidates: List[str] = []
+            patterns = [
+                r"\d+\.\s*([^,\n.]+)",
+                r"-\s*([^,\n.]+)",
+                r"•\s*([^,\n.]+)",
+                r",\s*([^,\n.]+)",
+                r":\s*([^,\n.]+)",
+            ]
 
-        for pattern in patterns:
-            matches = re.findall(pattern, text, re.MULTILINE)
-            candidates.extend(match.strip().lower() for match in matches)
+            for pattern in patterns:
+                matches = re.findall(pattern, text, re.MULTILINE)
+                candidates.extend(match.strip().lower() for match in matches)
+            
+            # Si no cazó patrones pero hay texto, intentar split por comas
+            if not candidates and "," in text:
+                 candidates = [k.strip().lower() for k in text.split(",")]
 
         filtered = [kw for kw in candidates if 3 <= len(kw) <= 30]
         unique = list(dict.fromkeys(filtered))

@@ -1037,27 +1037,57 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
     query_language = embedder.detect_language(query)
 
     # Buscar chunks relevantes con filtros mejorados
-    relevant_chunks = DocumentEmbedding.objects.filter(
+    candidates = list(DocumentEmbedding.objects.filter(
         file__contexts__id=context_id
-    ).annotate(
-        similarity=1 - L2Distance('embedding', query_embedding)
-    )
-
+    ).select_related('file').annotate(
+        distance=L2Distance('embedding', query_embedding)
+    ).order_by(L2Distance('embedding', query_embedding))[:200]) # Optimizado: 200 y select_related
     # Filtrar por idioma si coincide
-    if query_language in ['es', 'en', 'fr']:
-        language_chunks = relevant_chunks.filter(language=query_language)
-        if language_chunks.exists():
-            relevant_chunks = language_chunks
+    # [OPTIMIZACION] Desactivado filtrado estricto de idioma para permitir búsquedas multilingües
+    # (ej. Pregunta en Español -> Documentos en Inglés)
+    # y evitar ocultar documentos si el corpus es mixto.
+    # if query_language in ['es', 'en', 'fr']:
+    #     language_chunks = relevant_chunks.filter(language=query_language)
+    #     if language_chunks.exists():
+    #         relevant_chunks = language_chunks
 
-    # Obtener top chunks ordenados por similitud
-    top_chunks = relevant_chunks.order_by('-similarity')[:top_k]
 
-    # Filtrar chunks con similitud muy baja (umbral mínimo)
-    filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
+    # Obtener top chunks ordenados por similitud (Fase 1: Recuperación Densa)
+    # Aumentamos el recall inicial trayendo más candidatos (100) para soportar "many files"
+    # candidates ya está ordenado por la query de arriba
+    
+    # candidates = list(top_chunks) # ya es una lista
 
-    print(f"RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
+    if not candidates:
+        return []
 
-    return filtered_chunks[:min(20, len(filtered_chunks))]  # Limitar a 20 mejores resultados
+    print(f"RAG search: {len(candidates)} candidatos recuperados (Dense Retrieval)")
+
+    # Fase 2: Re-ranking (Cross-Encoder)
+    from .embeddings_service import ranker
+    
+    candidate_texts = [c.text for c in candidates]
+    # Usar el top_k solicitado, pero con un límite máximo seguridad de 100
+    safe_top_k = min(100, top_k)
+    ranked_indices = ranker.rank(query, candidate_texts, top_k=safe_top_k)
+    
+    # Reconstruir lista ordenada
+    final_chunks = []
+    
+    if not ranked_indices:
+        # FALLBACK: Si el re-ranking falla (modelo no cargado, timeout, etc.)
+        # Usamos los resultados de la búsqueda densa original
+        print(f"[WARNING] RAG search: Re-ranking falló o no retornó resultados. Usando recuperación densa (Fallback).")
+        final_chunks = candidates[:safe_top_k]
+    else:
+        print(f"RAG search: Aplicando Re-ranking a {len(candidates)} candidatos...")
+        for idx, score in ranked_indices:
+            chunk = candidates[idx]
+            # Opcional: inyectar el score del re-ranker si se quisiera debuggear
+            # chunk.rerank_score = score 
+            final_chunks.append(chunk)
+
+    return final_chunks
 
 
 # Función auxiliar para limpiar cache periódicamente

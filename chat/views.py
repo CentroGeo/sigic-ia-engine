@@ -10,6 +10,7 @@ from django.http import StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
 from fileuploads.embeddings_service import embedder
+from fileuploads.views import optimized_rag_search
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from pgvector.django import L2Distance
 from .serializers import HistoryMiniSerializer
@@ -31,52 +32,7 @@ llm_lock: threading.Lock = threading.Lock()
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
 
 
-def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[DocumentEmbedding]:
-    """
-    Búsqueda RAG optimizada con mejor ranking y filtrado
-    """
-    try:
-        # Generar embedding de la consulta
-        query_embedding = embedder.embed_query(query)
 
-        if query_embedding is None or len(query_embedding) == 0:
-            print(f"[WARNING] No se pudo generar embedding para la consulta: {query[:100]}...")
-            return []
-
-        # Detectar idioma de la consulta
-        query_language = embedder.detect_language(query)
-        print(f"[DEBUG] Consulta detectada en idioma: {query_language}")
-
-        # Buscar chunks relevantes con filtros mejorados
-        relevant_chunks = DocumentEmbedding.objects.filter(
-            file__contexts__id=context_id
-        ).annotate(
-            similarity=1 - L2Distance('embedding', query_embedding)
-        )
-
-        # Filtrar por idioma si coincide (con fallback)
-        if query_language in ['es', 'en', 'fr']:
-            language_chunks = relevant_chunks.filter(language=query_language)
-            if language_chunks.exists():
-                print(f"[DEBUG] Usando chunks en {query_language}")
-                relevant_chunks = language_chunks
-            else:
-                print(f"[DEBUG] No hay chunks en {query_language}, usando todos los idiomas")
-
-        # Obtener top chunks ordenados por similitud
-        top_chunks = list(relevant_chunks.order_by('-similarity')[:top_k])
-
-        # Filtrar chunks con similitud muy baja (umbral mínimo)
-        # filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
-
-        # print(f"[DEBUG] RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
-        # print(f"[DEBUG] Similitudes: {[round(chunk.similarity, 3) for chunk in filtered_chunks[:5]]}")
-
-        return top_chunks[:min(20, len(top_chunks))]  # Limitar a 20 mejores resultados
-
-    except Exception as e:
-        print(f"[ERROR] Error en optimized_rag_search: {str(e)}")
-        return []
 
 
 @extend_schema(
@@ -156,53 +112,71 @@ def chat(request):
                     relevant_chunks = optimized_rag_search(
                         context_id=context.id,
                         query=query,
-                        top_k=30  # Reducido para mejor rendimiento
-                    )
+                        top_k=60  # Revertido a 60 para estabilidad
+                     )
 
                     # Construir contexto RAG si hay chunks relevantes
                     if relevant_chunks:
-                        # Agrupar chunks por documento para mejor contexto
-                        docs_context = {}
+                        # [REVERTIDO] Lógica simplificada de contexto (Top N chunks)
+                        # Agrupar chunks por documento para lectura estructurada
+                        docs_chunks_map = {}
                         for chunk in relevant_chunks:
-                            doc_name = chunk.file.filename
-                            if doc_name not in docs_context:
-                                docs_context[doc_name] = []
-                            docs_context[doc_name].append({
-                                'text': chunk.text[:800],  # Limitar texto por chunk
-                                'similarity': chunk.similarity
-                            })
+                            fname = chunk.file.filename
+                            if fname not in docs_chunks_map:
+                                docs_chunks_map[fname] = []
+                            docs_chunks_map.get(fname).append(chunk)
 
-                        # Construir contexto optimizado
                         rag_context = "Contexto relevante de los documentos:\n\n"
+                        
+                        # Simplemente iterar los chunks recuperados (ya vienen re-rankeados o por similitud)
+                        # Limitamos a un máximo de caracteres por seguridad
+                        MAX_CONTEXT_CHARS = 18000
+                        
+                        current_doc = ""
+                        # Ordenamos por archivo para que sea legible
+                        relevant_chunks.sort(key=lambda x: x.file.filename)
+                        
+                        for chunk in relevant_chunks:
+                            fname = chunk.file.filename
+                            new_text = f"- {chunk.text[:800]}\n"
+                            
+                            if fname != current_doc:
+                                header_text = f"\n📄 **{fname}**:\n"
+                                if len(rag_context) + len(header_text) + len(new_text) > MAX_CONTEXT_CHARS:
+                                    rag_context += f"\n[...Truncado {MAX_CONTEXT_CHARS} chars...]"
+                                    break
+                                current_doc = fname
+                                rag_context += header_text
+                            else:
+                                if len(rag_context) + len(new_text) > MAX_CONTEXT_CHARS:
+                                    rag_context += f"\n[...Truncado...]"
+                                    break
+                            
+                            rag_context += new_text
 
-                        for doc_name, chunks in docs_context.items():
-                            # Ordenar chunks por similitud
-                            chunks.sort(key=lambda x: x['similarity'], reverse=True)
+                        print(f"[DEBUG] RAG context final: {len(rag_context)} caracteres")
+                        
+                        # [MEJORA DE PROMPT] Conservada
+                        # Inyectar el contexto directamente en el mensaje del USUARIO en lugar del SYSTEM.
+                        
+                        original_query = payload["messages"][1]["content"]
+                        augmented_query = (
+                            f"Instrucciones: Responde a la pregunta basándote ÚNICAMENTE en el siguiente contexto.\n\n"
+                            f"{rag_context}\n\n"
+                            f"Pregunta del usuario: {original_query}"
+                        )
+                        
+                        new_messages[-1]["content"] = augmented_query
 
-                            rag_context += f"📄 **{doc_name}**:\n"
-                            for i, chunk_data in enumerate(chunks[:3]):  # Max 3 chunks por documento
-                                rag_context += f"- {chunk_data['text']}\n"
-                            rag_context += "\n"
-
-                        print(f"[DEBUG] RAG context construido: {len(rag_context)} caracteres")    
-                        # Insertar contexto RAG en el sistema prompt
-                        system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
-
-    {rag_context}
-
-    INSTRUCCIONES:
-    - Responde SIEMPRE en español
-    - Basa tu respuesta en el contexto proporcionado
-    - Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
-    - Cita los documentos relevantes cuando sea apropiado
-    - Sé conciso pero completo en tu respuesta"""
+                        # System Prompt ligero
+                        system_prompt = "Eres un asistente experto de IA. Tu objetivo es sintetizar información de los documentos proporcionados."
 
                         updated_payload["messages"].insert(0, {
                             "role": "system",
                             "content": system_prompt
                         })
 
-                        relevant_docs = list(docs_context.keys())
+                        relevant_docs = list(docs_chunks_map.keys())
                         print(f"[DEBUG] Documentos utilizados: {relevant_docs}")
 
                     else:

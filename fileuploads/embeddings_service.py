@@ -391,9 +391,62 @@ class OllamaEmbedder:
 
 
 # Instancia global mejorada
+
+# Instancia global mejorada
 embedder = OllamaEmbedder(
     max_chunk_size=512,
     chunk_overlap=50,
     batch_size=150,  # Reducido para mejor estabilidad
     max_retries=2
 )
+
+
+class CrossEncoderRanker:
+    """Clase para reordenar resultados de búsqueda usando Cross-Encoders"""
+    
+    def __init__(self, model_name: str = 'cross-encoder/ms-marco-MiniLM-L-6-v2'):
+        self.model_name = model_name
+        self._model = None
+        self._load_model()
+        
+    def _load_model(self):
+        try:
+            from sentence_transformers import CrossEncoder
+            import torch
+            
+            # Usar GPU si está disponible
+            device = 'cuda' if torch.cuda.is_available() else 'cpu'
+            logger.info(f"Cargando CrossEncoder {self.model_name} en {device}...")
+            
+            self._model = CrossEncoder(self.model_name, device=device)
+            logger.info("CrossEncoder cargado exitosamente")
+        except Exception as e:
+            logger.error(f"Error cargando CrossEncoder: {e}")
+            self._model = None
+            
+    def rank(self, query: str, docs: List[str], top_k: int = 5) -> List[Tuple[int, float]]:
+        """
+        Reordena una lista de documentos basada en su relevancia con la consulta.
+        Retorna lista de (indice_original, score).
+        """
+        if not self._model or not docs:
+            return []
+            
+        pairs = [[query, doc] for doc in docs]
+        
+        try:
+            scores = self._model.predict(pairs)
+            
+            # Combinar índice original con score
+            scored_docs = list(enumerate(scores))
+            
+            # Ordenar por score descendente
+            ranked = sorted(scored_docs, key=lambda x: x[1], reverse=True)
+            
+            return ranked[:top_k]
+        except Exception as e:
+            logger.error(f"Error durante re-ranking: {e}")
+            return []
+
+# Instancia global del ranker (lazy loading ocurrirá al inicio o primera llamada)
+ranker = CrossEncoderRanker()
