@@ -229,38 +229,52 @@ def chat(request):
                     with open("prompt_keys.txt", "w", encoding="utf-8") as f:
                         f.write(system_prompt_KEYS)
                     
-                    url = f"{server}/api/chat"
-                    sql_payload = {
-                        "model": "deepseek-r1",
-                        "messages": [
-                            {"role": "system", "content": system_prompt_KEYS},
-                            {"role": "user", "content": llm_context},
-                        ],
-                        "stream": False,
-                        "temperature": 0,
-                        "think": False
-                    }
-                    
-                    resp = requests.post(
-                        url, 
-                        json=sql_payload, 
-                        headers={"Content-Type": "application/json"}, 
-                        timeout=500
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    sql = data["message"]["content"]
+                    for interation in range(3): 
+                        query_key = False
+                        url = f"{server}/api/chat"
+                        sql_payload = {
+                            "model": "deepseek-r1",
+                            "messages": [
+                                {"role": "system", "content": system_prompt_KEYS},
+                                {"role": "user", "content": llm_context},
+                            ],
+                            "stream": False,
+                            "temperature": 0,
+                            "think": False
+                        }
+                        
+                        resp = requests.post(
+                            url, 
+                            json=sql_payload, 
+                            headers={"Content-Type": "application/json"}, 
+                            timeout=500
+                        )
+                        resp.raise_for_status()
+                        data = resp.json()
+                        sql = data["message"]["content"]
 
-                    print("Lista de keys v3:",flush=True)
-                    with open("result_prompt_keys.txt", "w", encoding="utf-8") as f:
-                        f.write(sql)
+                        print("Lista de keys v3:",flush=True)
+                        with open("result_prompt_keys.txt", "w", encoding="utf-8") as f:
+                            f.write(sql)
                     
-                    try:    
-                        with connection.cursor() as cursor:
-                            cursor.execute(sql)
-                            rows = cursor.fetchall()
-                    except Exception as e:
-                        print(f"Error al ejecutar la consulta SQL: {e}", flush=True)    
+                        try:    
+                            with connection.cursor() as cursor:
+                                cursor.execute(sql)
+                                rows = cursor.fetchall()
+                                break
+                        except Exception as e:
+                            query_key = True
+                            print(f"Error al ejecutar la consulta SQL: {e}", flush=True)
+                            llm_context = (
+                                f"Pregunta original: {payload["messages"][1]["content"]}\n"
+                                f"El SQL '{sql}' produjo el error: {str(e)}\n"
+                                "Corrige la consulta SQL."
+                            )    
+                            continue
+                    
+                    if(query_key):
+                        print("""Error al ejecutar la consulta SQL""", flush=True)
+                        return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
                     
                     print("Lista de keys v4:",rows,flush=True)
                     rows = [k[0] for k in rows]
@@ -312,7 +326,7 @@ def chat(request):
                         with open("context_question_user.txt", "w", encoding="utf-8") as f:
                             f.write(llm_context)
                     
-                        for interation in range(2): 
+                        for interation in range(3): 
                             query_error = False
                             url = f"{server}/api/chat"
                             sql_payload = {
