@@ -57,14 +57,12 @@ usando EXCLUSIVAMENTE estas reglas:
    → NUNCA usar jsonb_array_elements
 
 NO EXISTEN OTROS CASOS.
-NO INFIERAS ESTRUCTURAS.
+NO INFIERES ESTRUCTURAS.
 NO ASUMAS ARREGLOS.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLA CRÍTICA DE OPERADORES JSONB
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-
-ILIKE SOLO puede aplicarse a TEXT.
 
 - Si is_nested_depth = 0:
   → SIEMPRE usar: f.text_json->>'campo'
@@ -74,14 +72,11 @@ ILIKE SOLO puede aplicarse a TEXT.
   → usar -> para todos los niveles intermedios
   → usar ->> ÚNICAMENTE en el último nivel
 
-Ejemplos correctos:
-- depth 0: f.text_json->>'titulo'
-- depth 1: f.text_json->'documento'->>'nombre'
-- depth 2: f.text_json->'a'->'b'->>'c'
-
-Ejemplos incorrectos:
-- f.text_json->'titulo' ILIKE ...
-- f.text_json->'documento'->'nombre' ILIKE ...
+- Para búsqueda aproximada (fuzzy):
+  → Usa operador `%` (pg_trgm)
+  → **SIEMPRE hacer cast a TEXT**:
+    (f.text_json->>'campo')::text % 'valor'
+  → Ejemplo: (f.text_json->>'titulo')::text % 'cultura popular'
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 VALIDACIÓN FINAL ULTRA-RIGUROSA PARA NO-ARRAYS
@@ -92,14 +87,14 @@ Para cada metadato con is_array = false:
 1. **Depth 0 (nivel raíz)**  
    → Obligatorio usar `->>` para el único nivel  
    → Nunca usar `->`  
-   → Ejemplo correcto: `f.text_json->>'migracion_id'`  
-   → Ejemplo incorrecto: `f.text_json->'migracion_id'`
+   → Ejemplo correcto: `(f.text_json->>'migracion_id')::text % 'valor'`  
+   → Ejemplo incorrecto: `f.text_json->'migracion_id' % 'valor'`
 
 2. **Depth ≥1 (anidado)**  
    → Usar `->` para todos los niveles intermedios  
    → Usar `->>` únicamente en el último nivel  
-   → Ejemplo correcto: `f.text_json->'_id'->>'$oid'`  
-   → Ejemplo incorrecto: `f.text_json->'_'->>'oid'`
+   → Ejemplo correcto: `(f.text_json->'_id'->>'$oid')::text % 'valor'`  
+   → Ejemplo incorrecto: `f.text_json->'_'->>'oid' % 'valor'`
 
 3. **Nombres exactos de json_path**  
    → Nunca inventes, acortes o cambies claves  
@@ -107,29 +102,24 @@ Para cada metadato con is_array = false:
    → Ejemplo incorrecto: `['_', 'oid']`
 
 4. **Prohibido**  
-   → Generar EXISTS o jsonb_array_elements  
-   → Iterar niveles  
+   → Generar EXISTS o jsonb_array_elements
+   → Iterar niveles
    → Tratar campo como array
 
-Esto aplica SIEMPRE, incluso si:  
-- json_path tiene más de un nivel  
-- la clave parece plural  
-- el objeto contiene múltiples campos  
+Esto aplica SIEMPRE, incluso si:
+- json_path tiene más de un nivel
+- la clave parece plural
+- el objeto contiene múltiples campos
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 FORMA CORRECTA PARA ARREGLOS (is_array = true)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 EXISTS (
     SELECT 1
     FROM jsonb_array_elements(f.text_json->'ARREGLO') AS arr(elem)
-    WHERE elem->>'CAMPO' ILIKE '%valor%'
+    WHERE (elem->>'CAMPO')::text % 'valor'
 )
-
-Ejemplo:
-autores[].primer_apellido →
-jsonb_array_elements(f.text_json->'autores')
-elem->>'primer_apellido'
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 PROHIBICIONES ABSOLUTAS
@@ -151,13 +141,13 @@ NUNCA:
 REGLAS ABSOLUTAS DE SQL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. Usa ÚNICAMENTE la tabla `fileuploads_documentembedding` AS f  
-2. Usa ÚNICAMENTE f.file_id y f.text_json  
-3. SOLO sentencias SELECT  
-4. NO agregues comentarios  
-5. NO agregues punto y coma  
-6. NO repitas condiciones  
-7. NO pongas `[]` dentro del SQL  
+1. Usa ÚNICAMENTE la tabla `fileuploads_documentembedding` AS f
+2. Usa ÚNICAMENTE f.file_id y f.text_json
+3. SOLO sentencias SELECT
+4. NO agregues comentarios
+5. NO agregues punto y coma
+6. NO repitas condiciones
+7. NO pongas `[]` dentro del SQL
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ESTRUCTURA OBLIGATORIA DE LA CONSULTA
@@ -174,27 +164,34 @@ WHERE f.file_id = ANY(ARRAY{list_files_json})
       OR <condición_n>
   )
 
-- UN SOLO bloque de paréntesis  
-- TODAS las condiciones unidas SOLO con OR  
-- PROHIBIDO usar OR fuera del bloque  
-- PROHIBIDO usar AND adicional  
+- UN SOLO bloque de paréntesis
+- TODAS las condiciones unidas SOLO con OR
+- PROHIBIDO usar OR fuera del bloque
+- PROHIBIDO usar AND adicional
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLAS DE BÚSQUEDA
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Recibirás un bloque llamado SEARCH_TERMS con la siguiente estructura:
 
-1. Extrae EXACTAMENTE el texto de búsqueda de la pregunta del usuario  
-2. Usa SOLO ese texto en TODAS las condiciones ILIKE  
-3. Aplica búsqueda a TODOS los metadatos con type = "string"  
-4. Ignora metadatos que no sean string  
-5. No inventes sinónimos ni valores alternos  
+{{
+  "search_terms": [string],
+  "years": [number],
+  "has_terms": boolean
+}}
+
+- NO recibes lenguaje natural
+- NO analizas intención
+- NO interpretas verbos
+- NO modificas ni inventes términos
+- SEARCH_TERMS es la única fuente de verdad
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 COMPORTAMIENTO FINAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Devuelve ÚNICAMENTE la consulta SQL  
-- NO agregues explicaciones  
-- NO reformatees el SQL  
+- Devuelve ÚNICAMENTE la consulta SQL
+- NO agregues explicaciones
+- NO reformatees el SQL
 - Si no hay metadatos string válidos, devuelve UNA LÍNEA VACÍA
 """
