@@ -719,7 +719,7 @@ def process_files(request, workspace, user_id):
         # 4. Guardado en BD
         # =========================
         objs = []
-
+        
         for idx, (chunk, embedding) in enumerate(zip(chunks, all_embeddings)):
             objs.append(
                 DocumentEmbedding(
@@ -739,6 +739,11 @@ def process_files(request, workspace, user_id):
             )
 
         DocumentEmbedding.objects.bulk_create(objs, batch_size=500)
+        
+        # Actualizar search_vector para los nuevos embeddings
+        # Esto es necesario porque bulk_create no llama a save() ni señales
+        from django.contrib.postgres.search import SearchVector
+        DocumentEmbedding.objects.filter(file=upload_file).update(search_vector=SearchVector('text'))
 
         upload_file.processed = True
         upload_file.language = language

@@ -31,51 +31,113 @@ llm_lock: threading.Lock = threading.Lock()
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
 
 
+from django.contrib.postgres.search import SearchVector, SearchQuery, SearchRank
+
 def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[DocumentEmbedding]:
     """
-    Búsqueda RAG optimizada con mejor ranking y filtrado
+    Búsqueda Híbrida (Vector + Keyword) con fusión RRF.
     """
     try:
-        # Generar embedding de la consulta
+        # =================== 1. BÚSQUEDA VECTORIAL ===================
         query_embedding = embedder.embed_query(query)
-
-        if query_embedding is None or len(query_embedding) == 0:
-            print(f"[WARNING] No se pudo generar embedding para la consulta: {query[:100]}...")
-            return []
-
-        # Detectar idioma de la consulta
-        query_language = embedder.detect_language(query)
-        print(f"[DEBUG] Consulta detectada en idioma: {query_language}")
-
-        # Buscar chunks relevantes con filtros mejorados
-        relevant_chunks = DocumentEmbedding.objects.filter(
-            file__contexts__id=context_id
-        ).annotate(
-            similarity=1 - L2Distance('embedding', query_embedding)
-        )
-
-        # Filtrar por idioma si coincide (con fallback)
-        if query_language in ['es', 'en', 'fr']:
-            language_chunks = relevant_chunks.filter(language=query_language)
-            if language_chunks.exists():
-                print(f"[DEBUG] Usando chunks en {query_language}")
-                relevant_chunks = language_chunks
+        vector_results = []
+        
+        if query_embedding is not None and len(query_embedding) > 0:
+            # DEBUG: Verificar si existen embeddings para este contexto
+            total_docs = DocumentEmbedding.objects.filter(file__contexts__id=context_id).count()
+            print(f"[DEBUG] Contexto {context_id} tiene {total_docs} chunks totales.")
+            
+            relevant_chunks = DocumentEmbedding.objects.filter(
+                file__contexts__id=context_id
+            ).annotate(
+                similarity=1 - L2Distance('embedding', query_embedding)
+            ).order_by('-similarity')[:top_k]
+            
+            vector_results = list(relevant_chunks)
+            if vector_results:
+                print(f"[DEBUG] Vector Search: {len(vector_results)} hits. Top score: {vector_results[0].similarity}")
             else:
-                print(f"[DEBUG] No hay chunks en {query_language}, usando todos los idiomas")
+                print(f"[DEBUG] Vector Search: 0 hits (pero hay {total_docs} docs). Posible problema de dimensiones o distancia.")
 
-        # Obtener top chunks ordenados por similitud
-        top_chunks = list(relevant_chunks.order_by('-similarity')[:top_k])
+        # =================== 2. BÚSQUEDA POR PALABRAS CLAVE (FTS) ===================
+        keyword_results = []
+        try:
+            # Limpiar query para FTS (quitar caracteres especiales básicos)
+            clean_query = query.replace("'", " ").replace('"', " ").strip()
+            
+            if len(clean_query) > 2:
+                search_query = SearchQuery(clean_query, config='spanish') # Asumiendo mayormente español
+                
+                keyword_chunks = DocumentEmbedding.objects.filter(
+                    file__contexts__id=context_id,
+                    search_vector=search_query
+                ).annotate(
+                    rank=SearchRank('search_vector', search_query)
+                ).order_by('-rank')[:top_k]
+                
+                keyword_results = list(keyword_chunks)
+                print(f"[DEBUG] Keyword Search: {len(keyword_results)} hits")
+        except Exception as e:
+            print(f"[WARNING] Falló Keyword Search (probablemente falta migración): {e}")
+            # Continuar solo con vector results
 
-        # Filtrar chunks con similitud muy baja (umbral mínimo)
-        # filtered_chunks = [chunk for chunk in top_chunks if chunk.similarity > 0.3]
+        # =================== 3. FUSIÓN RRF (Reciprocal Rank Fusion) ===================
+        # RRF score = 1 / (k + rank)
+        k_const = 60
+        doc_scores = {}
+        
+        # Procesar resultados vectoriales
+        for rank, doc in enumerate(vector_results):
+            if doc.id not in doc_scores:
+                doc_scores[doc.id] = {"doc": doc, "score": 0.0, "sources": []}
+            doc_scores[doc.id]["score"] += 1 / (k_const + rank + 1)
+            doc_scores[doc.id]["sources"].append("vector")
+            doc.start_similarity = getattr(doc, 'similarity', 0) # Guardar score original
+            
+        # Procesar resultados keyword
+        for rank, doc in enumerate(keyword_results):
+            if doc.id not in doc_scores:
+                doc_scores[doc.id] = {"doc": doc, "score": 0.0, "sources": []}
+            doc_scores[doc.id]["score"] += 1 / (k_const + rank + 1)
+            doc_scores[doc.id]["sources"].append("keyword")
 
-        # print(f"[DEBUG] RAG search: {len(filtered_chunks)} chunks encontrados para query en {query_language}")
-        # print(f"[DEBUG] Similitudes: {[round(chunk.similarity, 3) for chunk in filtered_chunks[:5]]}")
+        # Ordenar por score RRF
+        ranked_results = sorted(
+            doc_scores.values(), 
+            key=lambda x: x["score"], 
+            reverse=True
+        )
+        
+        # Recuperar objetos finales
+        final_chunks = []
+        for item in ranked_results[:min(8, len(ranked_results))]:  # Reducido a 8 chunks para evitar overflow de contexto
+            doc = item["doc"]
+            # Marcar origen para debug
+            doc.retrieval_source = "+".join(item["sources"])
+            final_chunks.append(doc)
 
-        return top_chunks[:min(20, len(top_chunks))]  # Limitar a 20 mejores resultados
+        if len(final_chunks) == 0:
+            # Heurística de Resumen/Fallback:
+            # Si no hay resultados y la query parece pedir un resumen o es muy corta,
+            # traer los primeros chunks de los archivos del contexto.
+            query_lower = query.lower()
+            if "resumen" in query_lower or "trata" in query_lower or "describe" in query_lower or len(query) < 15:
+                print(f"[DEBUG] Fallback activo: recuperando primeros chunks para resumen", flush=True)
+                fallback_chunks = DocumentEmbedding.objects.filter(
+                    file__contexts__id=context_id,
+                    chunk_index__lt=5  # Primeros 5 chunks de cada archivo
+                ).order_by('file_id', 'chunk_index')[:10]  # Max 10 chunks fallback
+                
+                for chunk in fallback_chunks:
+                    chunk.retrieval_source = "fallback_summary"
+                    final_chunks.append(chunk)
+
+        print(f"[DEBUG] Hybrid Search final: {len(final_chunks)} chunks", flush=True)
+        return final_chunks
 
     except Exception as e:
         print(f"[ERROR] Error en optimized_rag_search: {str(e)}")
+        # Fallback a búsqueda simple si falla algo complejo
         return []
 
 
@@ -159,48 +221,66 @@ def chat(request):
                         top_k=30  # Reducido para mejor rendimiento
                     )
 
-                    # Construir contexto RAG si hay chunks relevantes
                     if relevant_chunks:
                         # Agrupar chunks por documento para mejor contexto
                         docs_context = {}
+                        seen_chunks = set()
+                        
+                        rag_context = "CONTEXTO DE DOCUMENTOS:\n\n"
+                        doc_index = 1
+                        
+                        # Mapeo de Doc ID a nombre para citación
+                        doc_map = {}
+
                         for chunk in relevant_chunks:
+                            # Evitar duplicados exactos
+                            if chunk.id in seen_chunks:
+                                continue
+                            seen_chunks.add(chunk.id)
+                            
                             doc_name = chunk.file.filename
+                            if doc_name not in doc_map:
+                                doc_map[doc_name] = doc_index
+                                doc_index += 1
+                            
+                            current_doc_id = doc_map[doc_name]
+                            
+                            # Info de debug sobre origen (Vector vs Keyword)
+                            source_info = getattr(chunk, 'retrieval_source', 'vector')
+                            
+                            # Populate docs_context for logging purposes
                             if doc_name not in docs_context:
                                 docs_context[doc_name] = []
-                            docs_context[doc_name].append({
-                                'text': chunk.text[:800],  # Limitar texto por chunk
-                                'similarity': chunk.similarity
-                            })
+                            docs_context[doc_name].append(chunk.id)
 
-                        # Construir contexto optimizado
-                        rag_context = "Contexto relevante de los documentos:\n\n"
+                            rag_context += f"--- Fuente: {doc_name} ---\n"
+                            rag_context += f"{chunk.text[:1000]}\n\n"
 
-                        for doc_name, chunks in docs_context.items():
-                            # Ordenar chunks por similitud
-                            chunks.sort(key=lambda x: x['similarity'], reverse=True)
-
-                            rag_context += f"📄 **{doc_name}**:\n"
-                            for i, chunk_data in enumerate(chunks[:3]):  # Max 3 chunks por documento
-                                rag_context += f"- {chunk_data['text']}\n"
-                            rag_context += "\n"
-
-                        print(f"[DEBUG] RAG context construido: {len(rag_context)} caracteres")    
+                        print(f"[DEBUG] RAG context construido: {len(rag_context)} caracteres", flush=True)
+                        if len(rag_context) > 0:
+                            print(f"[DEBUG] Muestra de contexto (primeros 500 cars):\n{rag_context[:500]}", flush=True)
+                        
                         # Insertar contexto RAG en el sistema prompt
-                        system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
+                        system_prompt = f"""Eres un asistente experto y preciso. Tu tarea es responder a la pregunta del usuario basándote ÚNICAMENTE en el contexto proporcionado abajo.
 
-    {rag_context}
+{rag_context}
 
-    INSTRUCCIONES:
-    - Responde SIEMPRE en español
-    - Basa tu respuesta en el contexto proporcionado
-    - Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
-    - Cita los documentos relevantes cuando sea apropiado
-    - Sé conciso pero completo en tu respuesta"""
+INSTRUCCIONES CLAVE:
+1. Responde SIEMPRE en español.
+2. Utiliza la información de los bloques de texto para fundamentar tu respuesta.
+3. Cita SIEMPRE el nombre del archivo fuente entre corchetes al final de cada afirmación. Ejemplo: "El agua hiere a 100 grados [manual_ciencia.pdf]."
+4. Si la respuesta no está en el contexto, di explícitamente "No encuentro esa información en los documentos proporcionados".
+5. Sé claro, conciso y profesional."""
 
                         updated_payload["messages"].insert(0, {
                             "role": "system",
                             "content": system_prompt
                         })
+                        
+                        # Configuración explícita de opciones para evitar truncamiento
+                        if "options" not in updated_payload:
+                            updated_payload["options"] = {}
+                        updated_payload["options"]["num_ctx"] = 4096 # Aumentar ventana de contexto
 
                         relevant_docs = list(docs_context.keys())
                         print(f"[DEBUG] Documentos utilizados: {relevant_docs}")

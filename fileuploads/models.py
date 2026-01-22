@@ -1,6 +1,7 @@
-from django.db import connection
 from django.db import models
 from pgvector.django import VectorField
+from django.contrib.postgres.search import SearchVectorField
+from django.contrib.postgres.indexes import GinIndex
 import uuid
 import os
 
@@ -79,11 +80,15 @@ class DocumentEmbedding(models.Model):
     metadata        = models.JSONField(default=dict)
     created_date    = models.DateTimeField(auto_now_add=True)
     
+    # Campo para búsqueda Full Text (Hybrid Search)
+    search_vector   = SearchVectorField(null=True, blank=True)
+    
     #indices
     class Meta:
         indexes = [
             models.Index(fields=['file']),
             models.Index(fields=['language']),
+            GinIndex(fields=['search_vector']),
         ]
 
     @staticmethod
