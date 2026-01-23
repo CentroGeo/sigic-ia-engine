@@ -246,7 +246,7 @@ def chat(request):
                     search_terms = json.loads(search_terms)
                     list_files_json = list(context.files.filter(document_type='application/json').values_list('id', flat=True))
                     
-                    if search_terms["has_terms"]:
+                    if search_terms["has_terms"] or search_terms["has_quantity"] or search_terms["has_range"]:
                         
                         print("Lista de keys:", list_files_json,flush=True)
                         lista_de_keys = DocumentEmbedding.get_json_keys_with_types(list_files_json)
@@ -312,10 +312,13 @@ def chat(request):
                             print("""Error al ejecutar la consulta SQL""", flush=True)
                             return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
                         
-                        print("Lista de keys v4:",rows,flush=True)
-                        rows = [k[0] for k in rows]
+                        key_sql = [k[0] for k in rows]
+                        type_sql = [k[1] for k in rows]
                         list_reduce_keys = []
-                        for row_sql_keys in rows:
+                        print("Lista de keys v4:",rows, type_sql, flush=True)
+                        
+                        i = 0
+                        for row_sql_keys in key_sql:
                             for row_all_keys in lista_de_keys:
                                 if( 
                                 len(row_sql_keys.split(".")) == len(row_all_keys['key'].replace(".array.", ".").split(".")) and 
@@ -328,14 +331,16 @@ def chat(request):
                                     
                                     info = {    
                                         "key": row_all_keys['key'],
-                                        "type": row_all_keys['type'],
+                                        "type": type_sql[i],
+                                        #"type": row_all_keys['type'],
                                         "count": row_all_keys['count'],
                                         "is_array":  is_array,
                                         "json_path" : json_path,
                                         "is_nested_depth" : len(json_path) - 1
                                     }
                                     list_reduce_keys.append(info)   
-                        
+
+                            i += 1
                         
                         #print("Lista de keys v5:", len(lista_de_keys), flush=True)
                         print("Lista de keys v5:", len(list_reduce_keys), flush=True)
@@ -369,7 +374,7 @@ def chat(request):
                             with open("context_question_user.txt", "w", encoding="utf-8") as f:
                                 f.write(llm_context)
                         
-                            for interation in range(3): 
+                            for interation in range(5): 
                                 query_error = False
                                 url = f"{server}/api/chat"
                                 sql_payload = {
@@ -405,11 +410,40 @@ def chat(request):
                                 except Exception as e:
                                     query_error = True
                                     print(f"Error al ejecutar la consulta SQL: {e}", flush=True)
-                                    llm_context = (
-                                        f"Pregunta original: {payload["messages"][1]["content"]}\n"
-                                        f"El SQL '{sql}' produjo el error: {str(e)}\n"
-                                        "Corrige la consulta SQL."
-                                    )    
+                                    # llm_context = f"""
+                                    #     SEARCH_TERMS:
+                                    #     {json.dumps(search_terms, indent=2)}
+
+                                    #     METADATA_KEYS:
+                                    #     {json.dumps(list_reduce_keys, indent=2)}
+                                    # """
+                                    # llm_context += f"El SQL '{sql}' produjo el error: {str(e)}\n"
+                                    # llm_context += "Corrige la consulta SQL."    
+                                    llm_context = f"""
+                                        Pregunta original: {payload["messages"][1]["content"]}
+
+                                        SEARCH_TERMS:
+                                        {json.dumps(search_terms, indent=2)}
+
+                                        METADATA_KEYS:
+                                        {json.dumps(list_reduce_keys, indent=2)}
+
+                                        SQL previo que falló:
+                                        {sql}
+
+                                        Error producido:
+                                        {str(e)}
+
+                                        Instrucciones:
+                                        - Corrige la consulta SQL para que incluya todas las keys string relevantes según los metadatos.
+                                        - Aplica todos los search_terms en un solo bloque OR.
+                                        - Aplica el rango de años sobre la key 'anio' usando regex si corresponde.
+                                        - Cada término y cada año deben ir dentro de OR.
+                                        - No elimines keys ni términos.
+                                        - Devuelve solo la query SQL final, sin explicaciones, sin comentarios.
+                                        - Cumple las reglas de PostgreSQL 15.4 y JSONB.
+                                        """
+   
                                     continue
                             
                             if(query_error):
