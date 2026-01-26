@@ -140,7 +140,7 @@ jsonb_expr->'campo'->>'subcampo' % 'term'
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLA MAESTRA DE PRIORIDAD (NO NEGOCIABLE)
-━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 El orden de decisión es SIEMPRE:
 
@@ -160,9 +160,9 @@ Para range.type = "year":
 
 A) Si type = "number":
 - Acceso OBLIGATORIO:
-    f.text_json->'key'
+    f.text_json->>'key'
 - Aplicar DIRECTAMENTE:
-    (f.text_json->'key')::integer BETWEEN from AND to
+    (f.text_json->>'key')::integer BETWEEN from AND to
 - Está TERMINANTEMENTE PROHIBIDO:
     regex, %, ILIKE, jsonb_typeof, ->>
 
@@ -194,13 +194,17 @@ AND (
 
 EXISTS (
   SELECT 1
-  FROM jsonb_array_elements(<jsonb_array_path>) AS a
+  FROM jsonb_array_elements(<jsonb_path_jsonb>) AS a
   WHERE jsonb_typeof(a->'campo') = 'string'
     AND (
       (a->>'campo') % ANY (ARRAY[search_terms])
     )
 )
 
+IMPORTANTE:
+- NUNCA acceder con `->>` directamente a un array.
+- NUNCA usar `-> 'campo' ->> 'subcampo'` si is_array=True.
+- NUNCA inferir índices de array (autores.0, etc.).
 - Combinar TODAS las keys string con OR.
 - NUNCA usar OR entre términos individuales.
 - NUNCA usar =, ILIKE o ~*.
