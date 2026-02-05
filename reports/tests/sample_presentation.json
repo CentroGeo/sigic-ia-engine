@@ -1,0 +1,41 @@
+{
+  "title": "Reporte CEGEO",
+  "subtitle": "Monitoreo Marino",
+  "slides": [
+    {
+      "layout": "title",
+      "title": "Reporte CEGEO",
+      "subtitle": "Resumen Ejecutivo"
+    },
+    {
+      "layout": "bullets",
+      "title": "Hallazgos clave",
+      "bullets": [
+        "Baja cobertura de sensores en zonas costeras críticas.",
+        "Integración limitada entre plataformas locales e internacionales."
+      ],
+      "notes": "Fuente: Diagnóstico Monitoreo Marino 2025, pág. 12"
+    },
+    {
+      "layout": "two_columns",
+      "title": "Actores y Ubicaciones",
+      "left": {
+        "heading": "Actores",
+        "bullets": ["Institución A", "Institución B"]
+      },
+      "right": {
+        "heading": "Ubicaciones",
+        "bullets": ["Costa de Yucatán", "Norte de Quintana Roo"]
+      },
+      "notes": "Fuentes: Informe Técnico 2024, pág. 7–9"
+    },
+    {
+      "layout": "sources",
+      "title": "Fuentes consultadas",
+      "sources": [
+        { "name": "Diagnóstico Monitoreo Marino 2025", "detail": "CEGEO, pág. 12" },
+        { "name": "Informe Técnico 2024", "detail": "CEGEO, pág. 7–9" }
+      ]
+    }
+  ]
+}
