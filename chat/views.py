@@ -28,6 +28,7 @@ from django.db import connection
 from django.conf import settings
 import os
 import logging
+from .utils_json_search import search_in_json_files
 
 logger = logging.getLogger(__name__)
 
@@ -197,422 +198,127 @@ def chat(request):
             llm_response = {"role": "assistant", "content": ''}
             relevant_docs = []
 
-            # =================== RAG OPTIMIZADO ===================
+            # =================== RAG OPTIMIZADO + HYBRID + JSON ===================
             if payload['type'] == 'RAG':
                 context = Context.objects.get(id=payload['context_id'])
                 query = payload["messages"][1]["content"]
 
                 logger.debug(f"Iniciando búsqueda RAG para: {query[:100]}...")
 
-                files_json = context.files.filter(document_type='application/json').count()
-                logger.debug(f"files_json: {files_json}")
-                if(files_json == 0):
-                    # Usar la nueva función optimized_rag_search
+                # Detect file types
+                files_json_count = context.files.filter(document_type='application/json').count()
+                total_files = context.files.count()
+                files_text_count = total_files - files_json_count
+                
+                logger.debug(f"File stats - Total: {total_files}, JSON: {files_json_count}, Text: {files_text_count}")
+
+                rag_context = ""
+                json_context_content = ""
+                
+                # 1. RAG Search (for Text files, or strict fallback)
+                if files_text_count > 0 or files_json_count == 0:
                     relevant_chunks = optimized_rag_search(
                         context_id=context.id,
                         query=query,
-                        top_k=30  # Reducido para mejor rendimiento
+                        top_k=30
                     )
 
-                    # Construir contexto RAG si hay chunks relevantes
                     if relevant_chunks:
-                        # Agrupar chunks por documento para mejor contexto
                         docs_context = {}
                         for chunk in relevant_chunks:
                             doc_name = chunk.file.filename
                             if doc_name not in docs_context:
                                 docs_context[doc_name] = []
                             docs_context[doc_name].append({
-                                'text': chunk.text[:800],  # Limitar texto por chunk
+                                'text': chunk.text[:800],
                                 'similarity': chunk.similarity
                             })
 
-                        # Construir contexto optimizado
                         rag_context = "Contexto relevante de los documentos:\n\n"
-
                         for doc_name, chunks in docs_context.items():
-                            # Ordenar chunks por similitud
                             chunks.sort(key=lambda x: x['similarity'], reverse=True)
-
                             rag_context += f"📄 **{doc_name}**:\n"
-                            for i, chunk_data in enumerate(chunks[:3]):  # Max 3 chunks por documento
+                            for i, chunk_data in enumerate(chunks[:3]):
                                 rag_context += f"- {chunk_data['text']}\n"
                             rag_context += "\n"
-
-                        logger.debug(f"RAG context construido: {len(rag_context)} caracteres")    
-                        # Insertar contexto RAG en el sistema prompt
-                        system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
-
-    {rag_context}
-
-    INSTRUCCIONES:
-    - Responde SIEMPRE en español
-    - Basa tu respuesta en el contexto proporcionado
-    - Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
-    - Cita los documentos relevantes cuando sea apropiado
-    - Sé conciso pero completo en tu respuesta"""
-
-                        updated_payload["messages"].insert(0, {
-                            "role": "system",
-                            "content": system_prompt
-                        })
-
-                        relevant_docs = list(docs_context.keys())
-                        logger.debug(f"Documentos utilizados: {relevant_docs}")
-
+                            
+                        logger.debug(f"Documentos RAG utilizados: {list(docs_context.keys())}")
                     else:
                         logger.warning("No se encontraron chunks relevantes para la consulta RAG")
-                        # Prompt para cuando no hay contexto
-                        updated_payload["messages"].insert(0, {
-                            "role": "system",
-                            "content": "Eres un asistente amable. El usuario ha hecho una pregunta pero no tengo información específica en los documentos para responderla. Responde amablemente que no tienes información suficiente sobre ese tema específico en los documentos disponibles."
-                        })
 
+                # 2. JSON Search (SQL)
+                if files_json_count > 0:
+                    logger.debug("Ejecutando búsqueda JSON...")
+                    print("Ejecutando búsqueda JSON...", flush=True)
+                    
+                    rows_serializable = search_in_json_files(context, query, REASONING_MODEL, server)
+                    if rows_serializable:
+                        json_context_content = generate_insight_prompt(query, rows_serializable)
+                
+                
+                print("Ejecutando búsqueda JSON...",json_context_content , flush=True)
+                #print("Ejecutando búsqueda JSON...",rag_context , flush=True)
+                # 3. Combine and Set Prompt
+                if rag_context and json_context_content:
+                    # HYBRID MODE
+                    print("Modo Híbrido Activado (RAG + JSON)", flush=True)
+                    logger.info("Modo Híbrido Activado (RAG + JSON)")
+                    system_prompt = f"""Eres un asistente avanzado capaz de analizar múltiples fuentes de información.
+Tienes acceso tanto a documentos de texto (PDF, DOCX) como a datos estructurados (JSON/SQL).
+
+=== FUENTE 1: DATOS ESTRUCTURADOS ===
+{json_context_content}
+
+=== FUENTE 2: DOCUMENTOS DE TEXTO ===
+{rag_context}
+
+INSTRUCCIONES COMBINADAS:
+1. Integra la información de ambas fuentes para dar una respuesta completa.
+2. Si los datos estructurados (Fuente 1) contienen cifras precisas, úsalas como autoridad principal para números.
+3. Si los documentos de texto (Fuente 2) contienen explicaciones o contexto cualitativo, úsalos para enriquecer la respuesta.
+4. Si hay contradicciones explícitas, menciona qué dice cada fuente.
+5. Responde SIEMPRE en español y mantén un tono profesional.
+"""
+                    updated_payload["messages"].insert(0, {
+                        "role": "system",
+                        "content": system_prompt
+                    })
+                    
+                elif json_context_content:
+                    # JSON ONLY MODE
+                    logger.info("Modo JSON Only Activado")
+                    updated_payload["messages"].insert(0, {
+                        "role": "system",
+                        "content": json_context_content
+                    })
+                    
+                elif rag_context:
+                    # RAG ONLY MODE
+                    logger.info("Modo RAG Only Activado")
+                    system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
+
+{rag_context}
+
+INSTRUCCIONES:
+- Responde SIEMPRE en español
+- Basa tu respuesta en el contexto proporcionado
+- Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
+- Cita los documentos relevantes cuando sea apropiado
+- Sé conciso pero completo en tu respuesta"""
+
+                    updated_payload["messages"].insert(0, {
+                        "role": "system",
+                        "content": system_prompt
+                    })
+                
                 else:
-                    system_prompt_semantico = BASE_SYSTEM_PROMPT_SEMANTICO.format()
-                    llm_context = payload["messages"][1]["content"]
-                    
-                    url = f"{server}/api/chat"
-                    sql_payload = {
-                        "model": REASONING_MODEL,
-                        "messages": [
-                            {"role": "system", "content": system_prompt_semantico},
-                            {"role": "user", "content": llm_context},
-                        ],
-                        "stream": False,
-                        "temperature": 0,
-                        "think": False
-                    }
-                    
-                    resp = requests.post(
-                        url, 
-                        json=sql_payload, 
-                        headers={"Content-Type": "application/json"}, 
-                        timeout=500
-                    )
-                    resp.raise_for_status()
-                    data = resp.json()
-                    search_terms = data["message"]["content"]
-                    logger.debug(f"Semantico!!!: {search_terms}")
-                    with open("result_prompt_semantico.txt", "w", encoding="utf-8") as f:
-                        f.write(search_terms)
-                    
-                    search_terms = json.loads(search_terms)
-                    list_files_json = list(context.files.filter(document_type='application/json').values_list('id', flat=True))
-                    
-                    if search_terms["has_terms"] or search_terms["has_quantity"] or search_terms["has_range"]:
-                        
-                        logger.debug(f"Lista de keys: {list_files_json}")
-                        lista_de_keys = DocumentEmbedding.get_json_keys_with_types(list_files_json)
-                        for row in lista_de_keys:
-                            logger.debug(f"{row['key']}: {row['type']} ({row['count']} filas)")
-                        
-                        #llm_context = payload["messages"][1]["content"]
-                        llm_context = f"""
-                            SEARCH_TERMS (AUTORIDAD FINAL):
-                            {json.dumps(search_terms, indent=2)}
-                        """
-                        logger.debug("Lista de keys v3:")
-                        system_prompt_KEYS = BASE_SYSTEM_PROMPT_KEYS.format(schema=lista_de_keys,list_files_json=list_files_json)
-                        
-                        logger.debug("Lista de keys v2:")
-                        with open("prompt_keys.txt", "w", encoding="utf-8") as f:
-                            f.write(system_prompt_KEYS)
-                        
-                        rows = []
-                        for interation in range(3): 
-                            query_key = False
-                            url = f"{server}/api/chat"
-                            sql_payload = {
-                                "model": REASONING_MODEL,
-                                "messages": [
-                                    {"role": "system", "content": system_prompt_KEYS},
-                                    {"role": "user", "content": llm_context},
-                                ],
-                                "stream": False,
-                                "temperature": 0,
-                                "think": False
-                            }
-                            
-                            resp = requests.post(
-                                url, 
-                                json=sql_payload, 
-                                headers={"Content-Type": "application/json"}, 
-                                timeout=500
-                            )
-                            resp.raise_for_status()
-                            data = resp.json()
-                            sql = data["message"]["content"]
+                    # NO INFO FOUND
+                    logger.info("No se encontró información en ninguna fuente")
+                    updated_payload["messages"].insert(0, {
+                        "role": "system",
+                        "content": "Eres un asistente amable. El usuario ha hecho una pregunta pero no tengo información específica en los documentos para responderla. Responde amablemente que no tienes información suficiente sobre ese tema específico en los documentos disponibles."
+                    })
 
-                            logger.debug(f"Lista de keys v3: {sql}")
-                            with open("result_prompt_keys.txt", "w", encoding="utf-8") as f:
-                                f.write(sql)
-                        
-                            try:    
-                                with connection.cursor() as cursor:
-                                    cursor.execute(sql)
-                                    rows = cursor.fetchall()
-                                    break
-                            except Exception as e:
-                                query_key = True
-                                logger.error(f"Error al ejecutar la consulta SQL: {e}")
-                                llm_context = (
-                                    f"Pregunta original: {payload['messages'][1]['content']}\n"
-                                    f"El SQL '{sql}' produjo el error: {str(e)}\n"
-                                    "Corrige la consulta SQL."
-                                )    
-                                continue
-                        
-                        if(query_key):
-                            logger.error("Error al ejecutar la consulta SQL de keys")
-                            return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
-                        
-                        key_sql = [k[0] for k in rows]
-                        type_sql = [k[1] for k in rows]
-                        list_reduce_keys = []
-                        logger.debug(f"Lista de keys v4: {rows} {type_sql}")
-                        
-                        i = 0
-                        for row_sql_keys in key_sql:
-                            for row_all_keys in lista_de_keys:
-                                if( 
-                                len(row_sql_keys.split(".")) == len(row_all_keys['key'].replace(".array.", ".").split(".")) and 
-                                row_sql_keys in row_all_keys['key'].replace(".array.", ".")
-                                ):
-                                    logger.debug(f"if data {row_all_keys['key']} {row_sql_keys}")
-                                    json_path = row_all_keys['key'].replace(".array.", ".").split(".")
-                                    is_array = row_all_keys['key'] != row_all_keys['key'].replace(".array.", "[].")
-                                    row_all_keys['key'] = row_all_keys['key'].replace(".array.", "[].")
-                                    
-                                    info = {    
-                                        "key": row_all_keys['key'],
-                                        "type": type_sql[i],
-                                        #"type": row_all_keys['type'],
-                                        "count": row_all_keys['count'],
-                                        "is_array":  is_array,
-                                        "json_path" : json_path,
-                                        "is_nested_depth" : len(json_path) - 1
-                                    }
-                                    list_reduce_keys.append(info)   
-
-                            i += 1
-                        
-                        logger.debug(f"Lista de keys v5: {len(list_reduce_keys)}")
-                        logger.debug(f"Lista de keys v5: {list_reduce_keys}")
-                        for row in list_reduce_keys:
-                            logger.debug(f"{row['key']}: {row['type']} ({row['count']} filas) ({row['is_array']})")
-                        
-                        if(len(list_reduce_keys) > 0):
-                            system_prompt = BASE_SYSTEM_PROMPT_JSON.format(list_files_json=list_files_json)
-                            
-                            # llm_context = f"""
-                            #     Metadatos disponibles (usar TODOS obligatoriamente):
-                            #     Cada metadato string DEBE generar una condición SQL.
-
-                            #     {json.dumps(list_reduce_keys, indent=2)}
-
-                            #     Pregunta REAL del usuario (única fuente de términos de búsqueda):
-                            #     {payload["messages"][1]["content"]}
-                            # """
-                            llm_context = f"""
-                                SEARCH_TERMS:
-                                {json.dumps(search_terms, indent=2)}
-
-                                METADATA_KEYS:
-                                {json.dumps(list_reduce_keys, indent=2)}
-                            """
-                            
-                            with open("prompt_question.txt", "w", encoding="utf-8") as f:
-                                f.write(system_prompt)
-                            
-                            with open("context_question_user.txt", "w", encoding="utf-8") as f:
-                                f.write(llm_context)
-                        
-                            for interation in range(5): 
-                                query_error = False
-                                url = f"{server}/api/chat"
-                                sql_payload = {
-                                    "model": REASONING_MODEL,
-                                    "messages": [
-                                        {"role": "system", "content": system_prompt},
-                                        {"role": "user", "content": llm_context},
-                                    ],
-                                    "stream": False,
-                                    "temperature": 0,
-                                    "think": False
-                                }
-                                
-                                resp = requests.post(
-                                    url, 
-                                    json=sql_payload, 
-                                    headers={"Content-Type": "application/json"}, 
-                                    timeout=500
-                                )
-                                resp.raise_for_status()
-                                data = resp.json()
-                                sql = data["message"]["content"]
-                                logger.info(f"SQL: {sql}")
-                                with open("result_question_user.txt", "w", encoding="utf-8") as f:
-                                    f.write(sql)
-                                    
-                                rows = None
-                                try:    
-                                    with connection.cursor() as cursor:
-                                        cursor.execute(sql)
-                                        rows = cursor.fetchall()
-                                        break
-                                except Exception as e:
-                                    query_error = True
-                                    logger.error(f"Error al ejecutar la consulta SQL: {e}")
-                                    # llm_context = f"""
-                                    #     SEARCH_TERMS:
-                                    #     {json.dumps(search_terms, indent=2)}
-
-                                    #     METADATA_KEYS:
-                                    #     {json.dumps(list_reduce_keys, indent=2)}
-                                    # """
-                                    # llm_context += f"El SQL '{sql}' produjo el error: {str(e)}\n"
-                                    # llm_context += "Corrige la consulta SQL."    
-                                    llm_context = f"""
-                                        Pregunta original: {payload["messages"][1]["content"]}
-
-                                        SEARCH_TERMS:
-                                        {json.dumps(search_terms, indent=2)}
-
-                                        METADATA_KEYS:
-                                        {json.dumps(list_reduce_keys, indent=2)}
-
-                                        SQL previo que falló:
-                                        {sql}
-
-                                        Error producido:
-                                        {str(e)}
-
-                                        Instrucciones:
-                                        - Corrige la consulta SQL para que incluya todas las keys string relevantes según los metadatos.
-                                        - Aplica todos los search_terms en un solo bloque OR.
-                                        - Aplica el rango de años sobre la key 'anio' usando regex si corresponde.
-                                        - Cada término y cada año deben ir dentro de OR.
-                                        - No elimines keys ni términos.
-                                        - Devuelve solo la query SQL final, sin explicaciones, sin comentarios.
-                                        - Cumple las reglas de PostgreSQL 15.4 y JSONB.
-                                        """
-   
-                                    continue
-                            
-                            if(query_error):
-                                logger.error("Error al ejecutar la consulta SQL final")
-                                return JsonResponse({"error": "Error al ejecutar la consulta SQL"}, status=500)
-                            
-                            rows_serializable = []
-                            for row in rows:
-                                serialized_row = []
-                                for value in row:
-                                    if value is None:
-                                        pass # l = 0
-                                    else:
-                                        # Convert all values to string for JSON serialization
-                                        serialized_row.append(str(value))
-                                        
-                                if(len(serialized_row) > 0):
-                                    rows_serializable.append(serialized_row)
-
-                            system_prompt = generate_insight_prompt(payload["messages"][1]["content"], rows_serializable)
-                            logger.debug(f"System prompt: {system_prompt}")
-                                    
-                            with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
-                                f.write(system_prompt)
-                                
-                            #updated_payload["temperature"] = 0
-                            updated_payload["messages"].insert(0, {
-                                "role": "system",
-                                "content": system_prompt
-                            })
-
-                        else:
-                            # Fallback si no hay keys reducidas
-                            sql = f"""
-                                SELECT text_json
-                                FROM fileuploads_documentembedding as f
-                                WHERE file_id = ANY(ARRAY{list_files_json})
-                                limit 20
-                            """
-                            
-                            rows = None
-                            try:    
-                                with connection.cursor() as cursor:
-                                    cursor.execute(sql)
-                                    rows = cursor.fetchall()
-                            except Exception as e:
-                                logger.error(f"Error al ejecutar la consulta SQL de fallback: {e}") 
-                                                
-                            rows_serializable = []
-                            for row in rows:
-                                serialized_row = []
-                                for value in row:
-                                    if value is None:
-                                        pass # l = 0
-                                    else:
-                                        # Convert all values to string for JSON serialization
-                                        serialized_row.append(str(value))
-                                        
-                                if(len(serialized_row) > 0):
-                                    rows_serializable.append(serialized_row)
-
-                            system_prompt = generate_insight_prompt(payload["messages"][1]["content"], rows_serializable)
-                            
-                            with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
-                                f.write(system_prompt)
-                                
-                            #updated_payload["temperature"] = 0
-                            updated_payload["messages"].insert(0, {
-                                "role": "system",
-                                "content": system_prompt
-                            })
-                    else:
-                        # Fallback simple
-                        sql = f"""
-                            SELECT text_json
-                            FROM fileuploads_documentembedding as f
-                            WHERE file_id = ANY(ARRAY{list_files_json})
-                            limit 20
-                        """
-                        
-                        rows = None
-                        try:    
-                            with connection.cursor() as cursor:
-                                cursor.execute(sql)
-                                rows = cursor.fetchall()
-                        except Exception as e:
-                            logger.error(f"Error al ejecutar la consulta SQL básica: {e}")   
-                                            
-                        rows_serializable = []
-                        if rows:
-                            for row in rows:
-                                serialized_row = []
-                                for value in row:
-                                    if value is None:
-                                        pass # l = 0
-                                    else:
-                                        # Convert all values to string for JSON serialization
-                                        serialized_row.append(str(value))
-                                        
-                                if(len(serialized_row) > 0):
-                                    rows_serializable.append(serialized_row)
-
-                        system_prompt = generate_insight_prompt(payload["messages"][1]["content"], rows_serializable)
-                        
-                        with open("prompt_result_question.txt", "w", encoding="utf-8") as f:
-                            f.write(system_prompt)
-                        
-                        updated_payload["messages"] = new_messages
-                        #updated_payload["messages"] = []
-                        #updated_payload["temperature"] = 0
-                        updated_payload["messages"].insert(0, {
-                            "role": "system",
-                            "content": system_prompt
-                        })
-                            
             # =================== LLAMADA A OLLAMA ===================
             logger.debug(f"Enviando {len(updated_payload['messages'])} mensajes a Ollama")
             #logger.debug(f"datA!!!! {updated_payload}")
