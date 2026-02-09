@@ -1,5 +1,3 @@
-# En chat/views.py - Versión corregida sin imports circulares
-
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.serializers import serialize

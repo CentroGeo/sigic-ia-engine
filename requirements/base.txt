@@ -43,3 +43,9 @@ ijson
 celery==5.3.4
 redis==5.0.1
 django-celery-results
+
+# Geospatial libraries
+geopandas>=0.14.0
+shapely>=2.0.0
+fiona>=1.9.0
+pyproj>=3.6.0

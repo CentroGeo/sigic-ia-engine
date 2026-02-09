@@ -3,6 +3,7 @@ from django.db import models
 from pgvector.django import VectorField
 import uuid
 import os
+import json
 
 def user_file_path(instance, filename):
     return os.path.join('uploads', 'workspaces', str(instance.workspace.id), 'files', filename)
@@ -108,6 +109,92 @@ class DocumentEmbedding(models.Model):
                 {"key": k, "type": t, "count": c}
                 for k, t, c in cursor.fetchall()
             ]
+    
+    @staticmethod
+    def discover_geojson_layers(context_id):
+        """
+        Descubre capas GeoJSON disponibles en un contexto.
+        
+        Args:
+            context_id: ID del contexto
+            
+        Returns:
+            Lista de diccionarios con metadata de cada capa:
+            [
+                {
+                    "file_id": int,
+                    "filename": str,
+                    "geometry_type": str,
+                    "properties": [str],
+                    "feature_count": int,
+                    "bbox": [minx, miny, maxx, maxy] | None
+                }
+            ]
+        """
+        query = """
+            SELECT 
+                f.file_id,
+                fi.filename,
+                f.text_json
+            FROM fileuploads_documentembedding f
+            JOIN fileuploads_files fi ON f.file_id = fi.id
+            JOIN fileuploads_context_files cf ON fi.id = cf.files_id
+            WHERE cf.context_id = %s
+            AND f.text_json IS NOT NULL
+            AND fi.document_type = 'application/json'
+        """
+        
+        layers = []
+        
+        with connection.cursor() as cursor:
+            cursor.execute(query, [context_id])
+            rows = cursor.fetchall()
+            
+            for file_id, filename, geojson_data in rows:
+                if isinstance(geojson_data, str):
+                    try:
+                        geojson_data = json.loads(geojson_data)
+                    except json.JSONDecodeError:
+                        continue
+
+                if not isinstance(geojson_data, dict):
+                    continue
+
+                
+                layer_info = {
+                    "file_id": file_id,
+                    "filename": filename,
+                    "geometry_type": None,
+                    "properties": [],
+                    "feature_count": 0,
+                    "bbox": None
+                }
+                
+                # Procesar según tipo de GeoJSON
+                features = []
+                if geojson_data.get('type') == 'Feature':
+                    features = [geojson_data]
+                elif geojson_data.get('type') == 'FeatureCollection':
+                    features = geojson_data.get('features', [])
+                
+                if features:
+                    layer_info['feature_count'] = len(features)
+                    
+                    # Obtener tipo de geometría del primer feature
+                    first_geom = features[0].get('geometry', {})
+                    layer_info['geometry_type'] = first_geom.get('type', 'Unknown')
+                    
+                    # Obtener propiedades del primer feature
+                    first_props = features[0].get('properties', {})
+                    layer_info['properties'] = list(first_props.keys())
+                    
+                    # Calcular bbox si está disponible
+                    if 'bbox' in geojson_data:
+                        layer_info['bbox'] = geojson_data['bbox']
+                
+                layers.append(layer_info)
+        
+        return layers
 
 # from django.db import models
 # from pgvector.django import VectorField
