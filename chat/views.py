@@ -357,11 +357,12 @@ Tienes acceso tanto a documentos de texto (PDF, DOCX) como a datos estructurados
 
 INSTRUCCIONES PARA RESPONDER:
 1. **Analiza AMBAS fuentes**: Cada fuente contiene información valiosa y complementaria sobre el tema.
-2. **Fuente 1**: Contiene datos estructurados que pueden incluir cifras, registros, atributos y contexto específico.
-3. **Fuente 2**: Contiene documentos con información narrativa, explicaciones, antecedentes y contexto adicional.
-4. **Integración**: Combina la información de ambas fuentes para construir una respuesta completa y enriquecida.
-5. **Idioma**: Responde SIEMPRE en español con tono profesional.
-6. **Completitud**: Basa tu respuesta ÚNICAMENTE en la información proporcionada; no agregues conocimiento externo.
+2. **Semántica y Relevancia**: El usuario puede usar términos generales (ej: 'libro', 'tecnología'). Debes mapear estos términos a los registros (ej: 'Articulo', 'Tesis', 'DESARROLLO_TECNOLOGIAS', etc.). Si hay una relación razonable con el tema, DEBES reportar el hallazgo.
+3. **Fuente 1**: Registros estructurados. Úsalos para cifras, atributos específicos y listados.
+4. **Fuente 2**: Documentos narrativos. Úsalos para explicaciones, antecedentes y contexto.
+5. **Integración**: Combina la información de ambas fuentes para construir una respuesta completa y enriquecida.
+6. **Idioma y Tono**: Responde SIEMPRE en español con tono profesional.
+7. **Completitud**: Basa tu respuesta ÚNICAMENTE en la información proporcionada; no agregues conocimiento externo. Solo si NADA es relevante en ninguna fuente, indica que no tienes información suficiente.
 """
                     updated_payload["messages"].insert(0, {
                         "role": "system",
@@ -422,7 +423,7 @@ INSTRUCCIONES:
                             break
                     
                     if last_user_idx != -1:
-                        reminder = "\n\n(Recordatorio: Actúa estrictamente como el analista/asistente definido en las instrucciones de sistema. No uses saludos ni sugerencias externas. Si no hay información relevante en los datos proporcionados, di que no tienes información suficiente.)"
+                        reminder = "\n\n(Recordatorio: Actúa estrictamente según las instrucciones de sistema. Sé semánticamente flexible: si un registro o documento trata sobre el tema de la pregunta aunque use términos distintos, DEBES reportarlo. Si no hay absolutamente nada relevante, di que no tienes información suficiente.)"
                         updated_payload["messages"][last_user_idx]["content"] += reminder
 
             # =================== LLAMADA A OLLAMA ===================
