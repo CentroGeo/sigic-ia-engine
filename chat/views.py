@@ -84,55 +84,128 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
         return []
 
 
-def generate_insight_prompt(user_query: str, rows_serializable: List[Any], sample_limit: int = 15) -> str:
-    """
-    Genera el prompt para el analista de datos basado en los resultados obtenidos.
-    """
-    row_count = len(rows_serializable)
+def generate_insight_prompt(user_query: str, rows_serializable: List[Any], 
+                           sample_limit: int = 15, hybrid_mode: bool = False) -> str:
     
+    row_count = len(rows_serializable)
+    sample_rows = []
+    
+    for row in rows_serializable[:sample_limit]:
+        formatted_row = []
+        for item in row:
+            try:
+                if isinstance(item, str) and (item.startswith('{') or item.startswith('[')):
+                    parsed_item = json.loads(item)
+                    formatted_row.append(json.dumps(parsed_item, indent=2, ensure_ascii=False))
+                else:
+                    formatted_row.append(item)
+            except:
+                formatted_row.append(item)
+        sample_rows.append(formatted_row)
+    
+    data_samples_str = ""
+    for i, row in enumerate(sample_rows):
+        data_samples_str += f"--- REGISTRO {i+1} ---\n"
+        for item in row:
+            data_samples_str += f"{item}\n"
+        data_samples_str += "\n"
+
+    if hybrid_mode:
+        if row_count > 0:
+            return f"""Resultados de búsqueda en datos estructurados ({row_count} registros encontrados)
+Muestra de datos:
+{data_samples_str}
+"""
+        else:
+            return "No se encontraron datos estructurados para esta consulta."
+    
+    # MODO JSON ONLY: Retornar prompt completo con instrucciones
     if row_count > 0:
-        sample_rows = rows_serializable[:sample_limit]
-        
         insight_prompt = (
-            "Eres un analista de datos que genera DESCRIPCIONES FACTUALES.\n\n"
+            "Eres un analista de datos experto que genera reportes técnicos ESTRICTOS y FACTUALES.\n\n"
 
-            "REGLAS ABSOLUTAS:\n"
-            "- Usa ÚNICAMENTE la información contenida en los resultados.\n"
-            "- NO agregues conocimiento externo.\n"
+            "REGLAS DE ORO (INCUMPLIMIENTO = FALLO CRÍTICO):\n"
+            "- Prohibido saludar, despedirse o usar frases de cortesía.\n"
+            "- Prohibido agregar conocimiento externo o sugerencias fuera de los datos.\n"
+            "- Usa ÚNICAMENTE la información contenida en los resultados proporcionados.\n"
+            "- SEMÁNTICA: El usuario puede usar términos generales como 'libro', 'documento' o 'archivo'. Debes mapear estos términos a los registros proporcionados (ej: 'Articulo', 'DIFUSION', 'Memorias', 'Tesis', etc.).\n"
+            "- TEMA: Si el título, revista, autores o cualquier atributo tiene una relación razonable con el tema (ej: 'bioenergía' es relevante para 'energía renovable'), DEBES incluirlo.\n"
+            "- NO evalúes si los datos son 'suficientes' para una conclusión científica compleja; simplemente reporta lo que los datos dicen sobre el tema de la pregunta.\n"
+            "- FALLBACK: Solo si NINGUNO de los registros tiene relación alguna con la pregunta, responde EXACTAMENTE: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n"
             "- NO infieras causas, consecuencias ni intenciones.\n"
-            "- NO evalúes si los datos son suficientes.\n"
-            "- NO respondas la pregunta con opinión.\n\n"
+            "- NO respondas con opiniones.\n\n"
 
-            "COMPORTAMIENTO:\n"
-            "- Si hay al menos un registro, describe brevemente lo que se observa.\n"
-            "- Si no hay registros, responde EXACTAMENTE:\n"
-            "'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+            "COMPORTAMIENTO ESPERADO:\n"
+            "- Analiza cuidadosamente cada registro en la 'Muestra de datos' (abajo).\n"
+            "- Si un registro es relevante, descríbelo brevemente destacando los campos clave (año, título, etc.).\n\n"
 
-            f"Pregunta del usuario (solo como contexto, NO para inferir):\n"
+            f"Pregunta del usuario (contexto de relevancia):\n"
             f"{user_query}\n\n"
 
             f"Resultados obtenidos ({row_count} filas):\n"
-            f"Muestra de datos:\n{sample_rows}\n\n"
+            f"Muestra de datos:\n{data_samples_str}\n\n"
 
             "Responde en español.\n"
-            "Devuelve SOLO el texto final."
+            "Devuelve SOLO el texto final del reporte, sin introducciones ni comentarios adicionales."
         )
     else:
         insight_prompt = (
-            "Eres un analista de datos experto. Tu tarea es generar un resumen estrictamente basado en los resultados obtenidos del sistema.\n\n"
-            "INSTRUCCIONES ESTRICTAS:\n"
-            "- Si existe al menos un dato en la muestra, debes generar un resumen basado únicamente en ese contenido, aunque sea un solo registro.\n"
-            "- No evalúes si la cantidad de datos es suficiente para responder la pregunta; simplemente reporta lo que hay.\n\n"
-            "Formato esperado:\n"
-            "Si hay datos, genera un breve resumen estructurado describiendo lo que se observa directamente en los resultados.\n"
-            "Si la muestra de datos está vacía, responde exactamente: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n\n"
+            "Eres un analista de datos experto. Si no hay resultados obtenidos, responde siguiendo la regla de fallback.\n\n"
             f"Pregunta del usuario: {user_query}\n"
-            f"Resultados obtenidos (0 filas):\n"
+            "Resultados obtenidos (0 filas):\n"
             "Muestra de datos: []\n\n"
+            "Responde EXACTAMENTE: 'No tengo información suficiente sobre ese tema particular en los documentos disponibles.'\n"
             "Responde en español."
         )
             
-    return f"Eres un analista de datos experto: {insight_prompt}"
+    return insight_prompt
+
+
+def filter_rag_for_hybrid(query: str, rag_context: str, model: str, server: str) -> str:
+    """
+    Filtra el contexto RAG para modo híbrido, extrayendo solo información relevante.
+    """
+    try:
+        filter_prompt = f"""Analiza el siguiente contexto de documentos y extrae ÚNICAMENTE la información relevante para esta pregunta:
+
+Pregunta: {query}
+
+Contexto completo:
+{rag_context}
+
+Instrucciones:
+- Extrae solo fragmentos directamente relacionados con la pregunta
+- Mantén citas textuales importantes y nombres de documentos
+- Descarta información no relacionada
+- Sé conciso pero completo
+- Si no hay información relevante, indica "No hay información relevante en los documentos"
+
+Devuelve SOLO el contexto filtrado sin explicaciones adicionales."""
+
+        payload = {
+            "model": model,
+            "prompt": filter_prompt,
+            "stream": False
+        }
+        
+        response = requests.post(
+            f"{server}/api/generate",
+            json=payload,
+            headers={"Content-Type": "application/json"},
+            timeout=int(os.environ.get("OLLAMA_TIMEOUT", 600))
+        )
+        response.raise_for_status()
+        
+        result = response.json()
+        filtered_context = result.get("response", "").strip()
+        
+        logger.debug(f"RAG context filtrado: {len(filtered_context)} caracteres (original: {len(rag_context)})")
+        
+        return filtered_context if filtered_context else rag_context
+        
+    except Exception as e:
+        logger.error(f"Error filtrando RAG context: {str(e)}. Usando contexto original.")
+        return rag_context
 
 @extend_schema(
     methods=["POST"],
@@ -253,7 +326,12 @@ def chat(request):
                     
                     rows_serializable = search_in_json_files(context, query, REASONING_MODEL, server)
                     if rows_serializable:
-                        json_context_content = generate_insight_prompt(query, rows_serializable)
+                        # Detectar si será modo híbrido (si ya existe rag_context)
+                        json_context_content = generate_insight_prompt(
+                            query, 
+                            rows_serializable,
+                            hybrid_mode=(rag_context != "")  # True si hay contexto RAG
+                        )
                 
                 
                 print("Ejecutando búsqueda JSON...",json_context_content , flush=True)
@@ -263,26 +341,35 @@ def chat(request):
                     # HYBRID MODE
                     print("Modo Híbrido Activado (RAG + JSON)", flush=True)
                     logger.info("Modo Híbrido Activado (RAG + JSON)")
+                    
+                    # Filtrar RAG context para modo híbrido
+                    logger.debug("Filtrando RAG context para modo híbrido...")
+                    rag_context_filtered = filter_rag_for_hybrid(query, rag_context, REASONING_MODEL, server)
+                    
                     system_prompt = f"""Eres un asistente avanzado capaz de analizar múltiples fuentes de información.
 Tienes acceso tanto a documentos de texto (PDF, DOCX) como a datos estructurados (JSON/SQL).
 
-=== FUENTE 1: DATOS ESTRUCTURADOS ===
+=== FUENTE 1: DATOS ESTRUCTURADOS (JSON/SQL) ===
 {json_context_content}
 
-=== FUENTE 2: DOCUMENTOS DE TEXTO ===
-{rag_context}
+=== FUENTE 2: DOCUMENTOS DE TEXTO (PDF/DOCX) ===
+{rag_context_filtered}
 
-INSTRUCCIONES COMBINADAS:
-1. Integra la información de ambas fuentes para dar una respuesta completa.
-2. Si los datos estructurados (Fuente 1) contienen cifras precisas, úsalas como autoridad principal para números.
-3. Si los documentos de texto (Fuente 2) contienen explicaciones o contexto cualitativo, úsalos para enriquecer la respuesta.
-4. Si hay contradicciones explícitas, menciona qué dice cada fuente.
-5. Responde SIEMPRE en español y mantén un tono profesional.
+INSTRUCCIONES PARA RESPONDER:
+1. **Analiza AMBAS fuentes**: Cada fuente contiene información valiosa y complementaria sobre el tema.
+2. **Fuente 1**: Contiene datos estructurados que pueden incluir cifras, registros, atributos y contexto específico.
+3. **Fuente 2**: Contiene documentos con información narrativa, explicaciones, antecedentes y contexto adicional.
+4. **Integración**: Combina la información de ambas fuentes para construir una respuesta completa y enriquecida.
+5. **Idioma**: Responde SIEMPRE en español con tono profesional.
+6. **Completitud**: Basa tu respuesta ÚNICAMENTE en la información proporcionada; no agregues conocimiento externo.
 """
                     updated_payload["messages"].insert(0, {
                         "role": "system",
                         "content": system_prompt
                     })
+                    
+                    with open("prompt_question.txt", "w", encoding="utf-8") as f:
+                        f.write(system_prompt)
                     
                 elif json_context_content:
                     # JSON ONLY MODE
@@ -291,6 +378,10 @@ INSTRUCCIONES COMBINADAS:
                         "role": "system",
                         "content": json_context_content
                     })
+                    
+                    with open("prompt_question_json.txt", "w", encoding="utf-8") as f:
+                        f.write(json_context_content)
+                    
                     
                 elif rag_context:
                     # RAG ONLY MODE
@@ -310,6 +401,10 @@ INSTRUCCIONES:
                         "role": "system",
                         "content": system_prompt
                     })
+                    
+                    with open("prompt_question_rag.txt", "w", encoding="utf-8") as f:
+                        f.write(json_context_content)
+                    
                 
                 else:
                     # NO INFO FOUND
@@ -318,6 +413,17 @@ INSTRUCCIONES:
                         "role": "system",
                         "content": "Eres un asistente amable. El usuario ha hecho una pregunta pero no tengo información específica en los documentos para responderla. Responde amablemente que no tienes información suficiente sobre ese tema específico en los documentos disponibles."
                     })
+
+                if updated_payload["messages"][0]["role"] == "system":
+                    last_user_idx = -1
+                    for i in range(len(updated_payload["messages"]) - 1, -1, -1):
+                        if updated_payload["messages"][i]["role"] == "user":
+                            last_user_idx = i
+                            break
+                    
+                    if last_user_idx != -1:
+                        reminder = "\n\n(Recordatorio: Actúa estrictamente como el analista/asistente definido en las instrucciones de sistema. No uses saludos ni sugerencias externas. Si no hay información relevante en los datos proporcionados, di que no tienes información suficiente.)"
+                        updated_payload["messages"][last_user_idx]["content"] += reminder
 
             # =================== LLAMADA A OLLAMA ===================
             logger.debug(f"Enviando {len(updated_payload['messages'])} mensajes a Ollama")
