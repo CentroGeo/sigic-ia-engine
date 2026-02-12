@@ -158,7 +158,7 @@ Muestra de datos:
             "Responde en español."
         )
             
-    return insight_prompt
+    return data_samples_str
 
 
 def filter_rag_for_hybrid(query: str, rag_context: str, model: str, server: str) -> str:
@@ -334,6 +334,19 @@ def chat(request):
                         )
                 
                 
+                system_prompt = f"""Eres un asistente avanzado capaz de analizar múltiples fuentes de información.
+Tienes acceso tanto a documentos de texto (PDF, DOCX) como a datos estructurados (JSON/SQL).
+
+INSTRUCCIONES PARA RESPONDER:
+1. **Analiza AMBAS fuentes**: Cada fuente contiene información valiosa y complementaria sobre el tema.
+2. **Semántica y Relevancia**: El usuario puede usar términos generales (ej: 'libro', 'tecnología'). Debes mapear estos términos a los registros (ej: 'Articulo', 'Tesis', 'DESARROLLO_TECNOLOGIAS', etc.). Si hay una relación razonable con el tema, DEBES reportar el hallazgo.
+3. **Fuente 1**: Registros estructurados. Úsalos para cifras, atributos específicos y listados.
+4. **Fuente 2**: Documentos narrativos. Úsalos para explicaciones, antecedentes y contexto.
+5. **Integración**: Combina la información de ambas fuentes para construir una respuesta completa y enriquecida.
+6. **Idioma y Tono**: Responde SIEMPRE en español con tono profesional.
+7. **Completitud**: Basa tu respuesta ÚNICAMENTE en la información proporcionada; no agregues conocimiento externo. Solo si NADA es relevante en ninguna fuente, indica que no tienes información suficiente.
+"""
+        
                 print("Ejecutando búsqueda JSON...",json_context_content , flush=True)
                 #print("Ejecutando búsqueda JSON...",rag_context , flush=True)
                 # 3. Combine and Set Prompt
@@ -345,68 +358,92 @@ def chat(request):
                     # Filtrar RAG context para modo híbrido
                     logger.debug("Filtrando RAG context para modo híbrido...")
                     rag_context_filtered = filter_rag_for_hybrid(query, rag_context, REASONING_MODEL, server)
+
+                    USER_PROMPT = f"""
+                    PREGUNTA DEL USUARIO:
+                    {query}
+
+                    === FUENTE 1: DATOS ESTRUCTURADOS (JSON/SQL) ===
+                    {json_context_content}
+
+                    === FUENTE 2: DOCUMENTOS DE TEXTO (PDF/DOCX) ===
+                    {rag_context_filtered}
+
+                    INSTRUCCIONES:
+                    - Responde con un resumen de lo más importante.
+                    - Prioriza los datos actuales.
+                    - Usa el histórico solo para dar contexto o cambios.
+                    - Si hay contradicciones, menciona ambas y di cuál es actual y cuál histórico.
+                    - Si no hay información suficiente, responde exactamente:
+                    "No hay información suficiente en los registros."
+                    """
                     
-                    system_prompt = f"""Eres un asistente avanzado capaz de analizar múltiples fuentes de información.
-Tienes acceso tanto a documentos de texto (PDF, DOCX) como a datos estructurados (JSON/SQL).
-
-=== FUENTE 1: DATOS ESTRUCTURADOS (JSON/SQL) ===
-{json_context_content}
-
-=== FUENTE 2: DOCUMENTOS DE TEXTO (PDF/DOCX) ===
-{rag_context_filtered}
-
-INSTRUCCIONES PARA RESPONDER:
-1. **Analiza AMBAS fuentes**: Cada fuente contiene información valiosa y complementaria sobre el tema.
-2. **Semántica y Relevancia**: El usuario puede usar términos generales (ej: 'libro', 'tecnología'). Debes mapear estos términos a los registros (ej: 'Articulo', 'Tesis', 'DESARROLLO_TECNOLOGIAS', etc.). Si hay una relación razonable con el tema, DEBES reportar el hallazgo.
-3. **Fuente 1**: Registros estructurados. Úsalos para cifras, atributos específicos y listados.
-4. **Fuente 2**: Documentos narrativos. Úsalos para explicaciones, antecedentes y contexto.
-5. **Integración**: Combina la información de ambas fuentes para construir una respuesta completa y enriquecida.
-6. **Idioma y Tono**: Responde SIEMPRE en español con tono profesional.
-7. **Completitud**: Basa tu respuesta ÚNICAMENTE en la información proporcionada; no agregues conocimiento externo. Solo si NADA es relevante en ninguna fuente, indica que no tienes información suficiente.
-"""
-                    updated_payload["messages"].insert(0, {
-                        "role": "system",
-                        "content": system_prompt
-                    })
+                    updated_payload["messages"] = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": USER_PROMPT},
+                    ]
                     
                     with open("prompt_question.txt", "w", encoding="utf-8") as f:
                         f.write(system_prompt)
                     
+                    with open("prompt_question_full.txt", "w", encoding="utf-8") as f:
+                        f.write(json.dumps(updated_payload, ensure_ascii=False, indent=2))
+                        
                 elif json_context_content:
                     # JSON ONLY MODE
                     logger.info("Modo JSON Only Activado")
-                    updated_payload["messages"].insert(0, {
-                        "role": "system",
-                        "content": json_context_content
-                    })
+                    
+                    USER_PROMPT = f"""
+                    PREGUNTA DEL USUARIO:
+                    {query}
+
+                    === FUENTE 1: DATOS ESTRUCTURADOS (JSON/SQL) ===
+                    {json_context_content}
+
+                    INSTRUCCIONES:
+                    - Responde con un resumen de lo más importante.
+                    - Prioriza los datos actuales.
+                    - Usa el histórico solo para dar contexto o cambios.
+                    - Si hay contradicciones, menciona ambas y di cuál es actual y cuál histórico.
+                    - Si no hay información suficiente, responde exactamente:
+                    "No hay información suficiente en los registros."
+                    """
+                    
+                    updated_payload["messages"] = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": USER_PROMPT},
+                    ]
                     
                     with open("prompt_question_json.txt", "w", encoding="utf-8") as f:
-                        f.write(json_context_content)
-                    
-                    
+                        f.write(json.dumps(updated_payload, ensure_ascii=False, indent=2))
+                        
                 elif rag_context:
-                    # RAG ONLY MODE
-                    logger.info("Modo RAG Only Activado")
-                    system_prompt = f"""Eres un asistente amable que puede ayudar al usuario. Responde de manera cordial y precisa basándote en el siguiente contexto de documentos.
+                    
+                    USER_PROMPT = f"""
+                    PREGUNTA DEL USUARIO:
+                    {query}
 
-{rag_context}
+                    === FUENTE 2: DATOS ESTRUCTURADOS (JSON/SQL) ===
+                    {rag_context}
 
-INSTRUCCIONES:
-- Responde SIEMPRE en español
-- Basa tu respuesta en el contexto proporcionado
-- Si la pregunta no puede responderse completamente con el contexto, menciona qué información tienes disponible
-- Cita los documentos relevantes cuando sea apropiado
-- Sé conciso pero completo en tu respuesta"""
-
-                    updated_payload["messages"].insert(0, {
-                        "role": "system",
-                        "content": system_prompt
-                    })
+                    INSTRUCCIONES:
+                    - Responde con un resumen de lo más importante.
+                    - Prioriza los datos actuales.
+                    - Usa el histórico solo para dar contexto o cambios.
+                    - Si hay contradicciones, menciona ambas y di cuál es actual y cuál histórico.
+                    - Si no hay información suficiente, responde exactamente:
+                    "No hay información suficiente en los registros."
+                    """
+                    
+                    
+                    updated_payload["messages"] = [
+                        {"role": "system", "content": system_prompt},
+                        {"role": "user", "content": USER_PROMPT},
+                    ]
                     
                     with open("prompt_question_rag.txt", "w", encoding="utf-8") as f:
-                        f.write(json_context_content)
-                    
-                
+                        f.write(json.dumps(updated_payload, ensure_ascii=False, indent=2))
+                        
                 else:
                     # NO INFO FOUND
                     logger.info("No se encontró información en ninguna fuente")

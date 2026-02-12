@@ -31,8 +31,10 @@ def search_in_json_files(context, query, reasoning_model, server_url) -> List[Li
                 {"role": "user", "content": query},
             ],
             "stream": False,
-            "temperature": 0,
-            "think": False
+            "format": "json",
+            "options": {
+                "temperature": 0
+            }
         }
         
         resp = requests.post(
