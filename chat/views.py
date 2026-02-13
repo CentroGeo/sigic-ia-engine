@@ -446,12 +446,15 @@ INSTRUCCIONES PARA RESPONDER:
                         
                 elif rag_context:
                     
+                    logger.debug("Filtrando RAG context para modo híbrido...")
+                    rag_context_filtered = filter_rag_for_hybrid(query, rag_context, REASONING_MODEL, server)
+
                     USER_PROMPT = f"""
                     PREGUNTA DEL USUARIO:
                     {query}
 
                     === FUENTE 2: DOCUMENTOS DE TEXTO (PDF/DOCX) ===
-                    {rag_context}
+                    {rag_context_filtered}
 
                     INSTRUCCIONES:
                     - Responde con un resumen de lo más importante.
