@@ -255,15 +255,17 @@ def chat(request):
             # Recuperar historial previo desde la base de datos
             history_obj = History.objects.get(id=payload['chat_id'])
             history_array = history_obj.history_array or []
+            history_array_chat = history_obj.history_array or []
             
             if(len(history_array) > 0):
                 history_array = history_array[-10:]
 
             # Agregar el nuevo mensaje del usuario al final del historial
             history_array.append(payload["messages"][1])
-
+            history_array_chat.append(payload["messages"][1])
+            
             # Usar el historial completo como new_messages
-            new_messages = history_array.copy()
+            new_messages = history_array_chat.copy()
 
             history_block = "\n".join([
                 f"USUARIO: {m['content']}" if m["role"] == "user"
