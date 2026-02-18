@@ -153,28 +153,47 @@ Si has_range = true:
 - NO aplicar regex a fields type = "number".
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGLA DE NAVEGACIÓN ANIDADA (json_path)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+Si un metadato tiene un `json_path` con más de un elemento, DEBES navegarlo paso a paso:
+
+1. Usa `->` para CADA nivel intermedio (objetos).
+2. Usa `->>` SOLO para el nivel FINAL para obtener texto.
+
+EJEMPLO (json_path: ["documento", "nombre"]):
+CORRECTO: (f.text_json->'documento')->>'nombre'
+PROHIBIDO: f.text_json->'documento.nombre'
+PROHIBIDO: f.text_json->>'documento'->>'nombre'
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLA DE RANGO DE AÑO (CORREGIDA Y ESTRICTA)
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Para range.type = "year":
 
-A) Si type = "number":
-- Acceso OBLIGATORIO:
-    f.text_json->>'key'
-- Aplicar DIRECTAMENTE:
-    (f.text_json->>'key')::integer BETWEEN from AND to
-- Está TERMINANTEMENTE PROHIBIDO:
-    regex, %, ILIKE, jsonb_typeof, ->>
+1. SIEMPRE usa `->>` para obtener el valor, sin importar si originalmente es number o string.
+2. SIEMPRE aplica un cast `::integer` al valor obtenido.
+3. SIEMPRE usa `BETWEEN` con los valores numéricos.
+4. Si el tipo original en METADATA_KEYS es "string", agrega validación regex ANTES del cast.
 
-B) Si type = "string":
-- Acceso FINAL con ->>
-- Validar con regex '^[0-9]{{4}}$'
-- Luego castear a INTEGER
-- Aplicar BETWEEN from AND to
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+REGLA DE RANGO DE AÑO (MÁXIMA PRIORIDAD)
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Si NO hay keys elegibles:
-- NO generar bloque de rango
-- Ignorar has_range sin error
+Si `has_range` es true y el rango es sobre un campo de año (ej: "anio"):
+
+1. USA OBLIGATORIAMENTE `->>` para obtener el valor como texto.
+2. APLICA SIEMPRE el cast `::integer` para la comparación.
+3. SIEMPRE incluye la validación regex `~ '^[0-9]{{4}}$'` antes del cast para evitar errores de ejecución.
+
+ESTRUCTURA ATÓMICA OBLIGATORIA:
+(f.text_json->>'anio') ~ '^[0-9]{{4}}$' AND (f.text_json->>'anio')::integer BETWEEN 2002 AND 2007
+
+Está TERMINANTEMENTE PROHIBIDO:
+- Usar `f.text_json->'anio'` (flecha simple) para cast a integer.
+- Usar comparaciones de año sin el operador `->>`.
+- Omitir el regex de validación numérica.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLA DE TÉRMINOS (has_terms = true)
@@ -213,9 +232,21 @@ IMPORTANTE:
 COMBINACIÓN FINAL
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-- Rango y términos se combinan con AND.
-- Dentro de cada bloque, usar OR solo entre keys.
-- NO inventar filtros.
+1. El bloque de RANGO se une al resto con `AND`.
+2. El bloque de TÉRMINOS (filtros simples y EXISTS) se agrupan TODOS con `OR` entre ellos.
+3. DEBES usar paréntesis para que el `AND` del rango afecte a todo el conjunto de términos.
+
+ESTRUCTURA OBLIGATORIA:
+WHERE f.file_id = ANY(...)
+  AND (bloque_rango)
+  AND (
+    (filtro_termino_1) OR
+    (filtro_termino_2) OR
+    (EXISTS ...) OR
+    (EXISTS ...)
+  )
+
+NO inventar filtros.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 ESTRUCTURA DE SALIDA CON FILE_ID
