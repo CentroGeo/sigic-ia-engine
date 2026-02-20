@@ -1059,6 +1059,37 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 
     return filtered_chunks[:min(20, len(filtered_chunks))]  # Limitar a 20 mejores resultados
 
+def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
+    query_embedding = embedder.embed_query(query)
+    if query_embedding is None:
+        print("[REPORT RAG] query_embedding=None")
+        return []
+
+    query_language = embedder.detect_language(query)
+
+    qs = DocumentEmbedding.objects.filter(file_id__in=file_ids).annotate(
+        distance=L2Distance("embedding", query_embedding)
+    )
+
+    # Log: cuántos chunks totales hay para esos files
+    total = qs.count()
+    print(f"[REPORT RAG] total chunks en BD para files={file_ids}: {total} (lang={query_language})")
+
+    if query_language in ["es", "en", "fr"]:
+        lang_qs = qs.filter(language=query_language)
+        if lang_qs.exists():
+            qs = lang_qs
+            print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
+
+    # con L2, lo correcto es ordenar ASC (menor distancia = más parecido)
+    top_chunks = qs.order_by("distance")[:top_k]
+
+    # Log: top distancias
+    dists = [float(getattr(c, "distance", 0.0)) for c in top_chunks[:5]]
+    print(f"[REPORT RAG] top distances (5): {dists}")
+
+    return list(top_chunks)
+
 
 # Función auxiliar para limpiar cache periódicamente
 def cleanup_embedding_cache():
