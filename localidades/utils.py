@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 def get_system_prompt(focus="México"):
     return f"""
-Eres un extractor de entidades geográficas.
+Eres un extractor de entidades geográficas y geocodificador simultáneo.
 Tu tarea es analizar el texto proporcionado y extraer exclusivamente las JURISDICCIONES POLÍTICO-ADMINISTRATIVAS (países, estados, municipios o localidades).
 
 REGLAS ABSOLUTAS:
@@ -18,23 +18,20 @@ REGLAS ABSOLUTAS:
 3. Si no encuentras ninguna entidad geográfica, devuelve una lista vacía.
 4. Categoriza cada hallazgo ESTRICTAMENTE como 'país', 'estado', 'municipio' o 'localidad'.
 5. PROHIBIDO INFERIR: No agregues lugares que no estén mencionados literalmente en el texto. El "context" DEBE incluir la palabra detectada.
-6. ESTRICTO CUMPLIMIENTO DEL JSON: NUNCA omitas el campo "context". ESTÁ PROHIBIDO responder con "N/A" en los campos de estado y país. Si no tienes la información, escribe "No especificado".
+6. ESTRICTO CUMPLIMIENTO DEL JSON: NUNCA omitas el campo "context", ni las "coordenadas". ESTÁ PROHIBIDO responder con "N/A" en los campos de estado y país. Si no tienes la información, escribe "No especificado".
 7. DEPENDENCIAS JERÁRQUICAS OBLIGATORIAS:
    - Si la entidad es un 'estado', DEBES agregar un campo 'país'.
    - Si la entidad es un 'municipio' o 'localidad', DEBES agregar 'estado' y 'país'.
 8. REGLAS DE CLASIFICACIÓN (EVITA ERRORES COMUNES):
-   - NUNCA clasifiques a un país soberano (Nación independiente en la ONU, ej. Francia, Japón, México) como "estado". Los países siempre son "país".
-   - Si un nombre puede referirse a un Estado y a una Ciudad/Municipio a la vez (ej. "Puebla", "Querétaro", "Oaxaca", "Guanajuato"), analiza el contexto. Si se enlista junto a otros estados, clasifícalo como "estado". Si se habla de la capital o ciudad, clasifícalo como "municipio". Ante la duda razonable u omisión de contexto específico de ciudad, clasifícalo como "estado".
-9. EXCLUSIONES (NO DEBES INCLUIR):
-   - Edificios o monumentos (ej. "Palacio", "Catedral", "Gran Muralla")
-   - Parques o reservas naturales
-   - Museos, Universidades, Instituciones ("UNESCO")
-   - Sitios y zonas arqueológicas, regiones ("América Latina", "Europa")
+   - NUNCA clasifiques a un país soberano (ej. Francia, Japón, México) como "estado". Los países siempre son "país".
+   - Si un nombre puede referirse a un Estado y a un Municipio a la vez (ej. Puebla, Querétaro, Oaxaca), analiza el contexto.
+9. COORDENADAS: Para cada lugar, estima sus coordenadas reales y devuélvelas en un arreglo numérico [longitud, latitud]. OBLIGATORIO escribir primero longitud y luego latitud.
+10. EXCLUSIONES: Edificios, monumentos, parques naturales, museos, universidades, y sitios arqueológicos.
 
 CRITERIO DE ACEPTACIÓN:
-   - ¿Es un PAÍS SOBERANO? (SÍ) -> "China", "Francia", "Ecuador" -> (Tipo: 'país')
-   - ¿Es un ESTADO/PROVINCIA/DEPARTAMENTO? (SÍ) -> "Yucatán", "Normandía", "Puebla (cuando es el Estado Libre y Soberano)" -> (Tipo: 'estado')
-   - ¿Es una CIUDAD/LOCALIDAD/PUEBLO? (SÍ) -> "París", "Puebla de Zaragoza (la ciudad)" -> (Tipo: 'municipio' o 'localidad')
+   - ¿Es un PAÍS SOBERANO? (SÍ) -> "China", "Francia" -> (Tipo: 'país')
+   - ¿Es un ESTADO/PROVINCIA/DEPARTAMENTO? (SÍ) -> "Yucatán", "Normandía" -> (Tipo: 'estado')
+   - ¿Es una CIUDAD/LOCALIDAD/PUEBLO? (SÍ) -> "París" -> (Tipo: 'municipio' o 'localidad')
 
 FORMATO DE SALIDA ESPERADO:
 {{
@@ -44,7 +41,8 @@ FORMATO DE SALIDA ESPERADO:
       "type": "país | estado | municipio | localidad",
       "context": "EXTRAE Y COPIA LA ORACIÓN COMPLETA (entre 10 y 30 palabras) del texto original donde aparece el lugar. ESTÁ PROHIBIDO poner solo el nombre del lugar aquí.",
       "país": "Nombre del país al que pertenece (sólo si type es estado, municipio o localidad)",
-      "estado": "Nombre del estado o provincia al que pertenece (sólo si type es municipio o localidad)"
+      "estado": "Nombre del estado o provincia al que pertenece (sólo si type es municipio o localidad)",
+      "coordenadas": [longitud, latitud]
     }}
   ]
 }}
@@ -142,6 +140,7 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
 
         # Eliminar posibles duplicados y aplicar filtro estricto (blacklist)
         unique_entities = []
+        geojson_features = []
         seen = set()
         
         BLACKLIST = [
@@ -184,6 +183,11 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             key = (name_clean.lower(), etype_clean)
             if key not in seen:
                 seen.add(key)
+                
+                # Extraemos coordenadas para evitar que queden en "properties" si es indeseado
+                # aunque en GeoJSON podrían quedarse, es mejor sacarlas para armar la geometría
+                coords = entity.pop("coordenadas", None)
+                
                 entity["name"] = name_clean  # Actualizamos por el nombre limpio
                 entity["type"] = etype_clean # Actualizamos por el tipo homologado
                 
@@ -203,8 +207,27 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
                         entity["país"] = focus if focus and focus != "auto" else val_placeholder
                 
                 unique_entities.append(entity)
+                
+                # Construcción del Feature GeoJSON
+                # Verificamos que las coordenadas sean un array de 2 números
+                is_valid_coords = isinstance(coords, list) and len(coords) == 2 and all(isinstance(c, (int, float)) for c in coords)
+                
+                feature = {
+                    "type": "Feature",
+                    "geometry": {
+                        "type": "Point",
+                        "coordinates": coords
+                    } if is_valid_coords else None,
+                    "properties": entity
+                }
+                geojson_features.append(feature)
 
-        return {"entities": unique_entities, "detected_focus": focus}
+        geojson_data = {
+            "type": "FeatureCollection",
+            "features": geojson_features
+        }
+
+        return {"entities": unique_entities, "geojson": geojson_data, "detected_focus": focus}
 
     except Exception as e:
         logger.error(f"Error extrayendo localidades del contexto: {str(e)}")

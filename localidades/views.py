@@ -26,6 +26,10 @@ logger = logging.getLogger(__name__)
                         }
                     }
                 },
+                "geojson": {
+                    "type": "object",
+                    "description": "Objeto FeatureCollection válido de GeoJSON georreferenciado."
+                },
                 "detected_focus": {"type": "string"}
             },
         }
