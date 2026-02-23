@@ -9,39 +9,42 @@ logger = logging.getLogger(__name__)
 
 def get_system_prompt(focus="México"):
     return f"""
-Eres un extractor de entidades geográficas especializado.
-Tu tarea es analizar el texto proporcionado y extraer exclusivamente las JURISDICCIONES POLÍTICO-ADMINISTRATIVAS (lugares que tienen un gobierno, alcalde o gobernador) .
+Eres un extractor de entidades geográficas.
+Tu tarea es analizar el texto proporcionado y extraer exclusivamente las JURISDICCIONES POLÍTICO-ADMINISTRATIVAS (países, estados, municipios o localidades).
 
 REGLAS ABSOLUTAS:
 1. Devuelve la información en formato JSON.
 2. NO incluyas explicaciones ni texto adicional fuera del JSON.
 3. Si no encuentras ninguna entidad geográfica, devuelve una lista vacía.
-4. Categoriza cada hallazgo como 'país', 'municipio' o 'estado'.
-5. Si el texto menciona una localidad y su municipio/estado, intenta relacionarlos.
-6. EXCLUSIONES (NO DEBES INCLUIR):
-   - Edificios o monumentos (ej. "Palacio de...", "Catedral de...", "Gran Muralla...")
-   - Parques o reservas naturales (ej. "Parque Nacional...", "Reserva de...")
-   - Museos, Universidades, Instituciones (ej. "Museo...", "Universidad...", "UNESCO")
-   - Sitios arqueológicos o religiosos (ej. "Zona Arqueológica...", "Abadía...", "Santuario...")
-   - Direcciones postales específicas, calles o avenidas.
+4. Categoriza cada hallazgo ESTRICTAMENTE como 'país', 'estado', 'municipio' o 'localidad'.
+5. PROHIBIDO INFERIR: No agregues lugares que no estén mencionados literalmente en el texto. El "context" DEBE incluir la palabra detectada.
+6. ESTRICTO CUMPLIMIENTO DEL JSON: NUNCA omitas el campo "context". ESTÁ PROHIBIDO responder con "N/A" en los campos de estado y país. Si no tienes la información, escribe "No especificado".
+7. DEPENDENCIAS JERÁRQUICAS OBLIGATORIAS:
+   - Si la entidad es un 'estado', DEBES agregar un campo 'país'.
+   - Si la entidad es un 'municipio' o 'localidad', DEBES agregar 'estado' y 'país'.
+8. REGLAS DE CLASIFICACIÓN (EVITA ERRORES COMUNES):
+   - NUNCA clasifiques a un país soberano (Nación independiente en la ONU, ej. Francia, Japón, México) como "estado". Los países siempre son "país".
+   - Si un nombre puede referirse a un Estado y a una Ciudad/Municipio a la vez (ej. "Puebla", "Querétaro", "Oaxaca", "Guanajuato"), analiza el contexto. Si se enlista junto a otros estados, clasifícalo como "estado". Si se habla de la capital o ciudad, clasifícalo como "municipio". Ante la duda razonable u omisión de contexto específico de ciudad, clasifícalo como "estado".
+9. EXCLUSIONES (NO DEBES INCLUIR):
+   - Edificios o monumentos (ej. "Palacio", "Catedral", "Gran Muralla")
+   - Parques o reservas naturales
+   - Museos, Universidades, Instituciones ("UNESCO")
+   - Sitios y zonas arqueológicas, regiones ("América Latina", "Europa")
 
 CRITERIO DE ACEPTACIÓN:
-   - ¿Es un PAÍS? (SÍ) -> "China", "Francia"
-   - ¿Es un ESTADO/PROVINCIA? (SÍ) -> "Yucatán", "Normandía"
-   - ¿Es una CIUDAD/MUNICIPIO/LOCALIDAD? (SÍ) -> "Beijing", "Versalles" (la ciudad, no el palacio)
-   
-   - ¿Es un edificio? (NO) -> Ignorar "Palacio de Versalles"
-   - ¿Es un monumento? (NO) -> Ignorar "Gran Muralla China"
-   - ¿Es una organización? (NO) -> Ignorar "UNESCO"
-   - ¿Es un sitio religioso? (NO) -> Ignorar "Abadía de Fontenay"
+   - ¿Es un PAÍS SOBERANO? (SÍ) -> "China", "Francia", "Ecuador" -> (Tipo: 'país')
+   - ¿Es un ESTADO/PROVINCIA/DEPARTAMENTO? (SÍ) -> "Yucatán", "Normandía", "Puebla (cuando es el Estado Libre y Soberano)" -> (Tipo: 'estado')
+   - ¿Es una CIUDAD/LOCALIDAD/PUEBLO? (SÍ) -> "París", "Puebla de Zaragoza (la ciudad)" -> (Tipo: 'municipio' o 'localidad')
 
 FORMATO DE SALIDA ESPERADO:
 {{
   "entities": [
     {{
-      "name": "Nombre del país, estado o municipio",
-      "type": "sólo puede ser una de estas opciones según corresponda:país | estado | municipio",
-      "context": "fragmento del texto original donde se menciona la localidad"
+      "name": "Nombre exacto del país, estado, municipio o localidad",
+      "type": "país | estado | municipio | localidad",
+      "context": "EXTRAE Y COPIA LA ORACIÓN COMPLETA (entre 10 y 30 palabras) del texto original donde aparece el lugar. ESTÁ PROHIBIDO poner solo el nombre del lugar aquí.",
+      "país": "Nombre del país al que pertenece (sólo si type es estado, municipio o localidad)",
+      "estado": "Nombre del estado o provincia al que pertenece (sólo si type es municipio o localidad)"
     }}
   ]
 }}
@@ -153,11 +156,18 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             name = entity.get("name", "")
             etype = entity.get("type", "")
             
-            if not name or not isinstance(name, str):
+            if not name or not isinstance(name, str) or not etype or not isinstance(etype, str):
                 continue
             
             name_clean = name.strip()
             name_lower = name_clean.lower()
+            
+            # Homologar tipo (si dice ciudad, pueblo o aldea -> municipio o localidad)
+            etype_lower = etype.strip().lower()
+            if etype_lower not in ["país", "estado", "localidad", "municipio"]:
+                etype_clean = "localidad"  # Ante la duda (ej. ciudad, poblado), marcar como localidad
+            else:
+                etype_clean = etype_lower
             
             # Regla 1: Longitud excesiva (probablemente una descripción o nombre de sitio en vez de ciudad)
             if len(name_clean.split()) > 5:
@@ -171,10 +181,27 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             if any(char.isdigit() for char in name_clean):
                continue
                 
-            key = (name_clean.lower(), etype.lower())
+            key = (name_clean.lower(), etype_clean)
             if key not in seen:
                 seen.add(key)
                 entity["name"] = name_clean  # Actualizamos por el nombre limpio
+                entity["type"] = etype_clean # Actualizamos por el tipo homologado
+                
+                # Garantizar que el campo "context" exista siempre
+                if "context" not in entity:
+                    entity["context"] = "Contexto no proporcionado por el modelo."
+                
+                # Garantizar jerarquías sin N/A
+                val_placeholder = "No especificado"
+                if etype_clean in ["municipio", "localidad"]:
+                    if "estado" not in entity or entity["estado"] in ["N/A", "n/a", "N/a", ""]:
+                        entity["estado"] = val_placeholder
+                    if "país" not in entity or entity["país"] in ["N/A", "n/a", "N/a", ""]:
+                        entity["país"] = focus if focus and focus != "auto" else val_placeholder
+                elif etype_clean == "estado":
+                    if "país" not in entity or entity["país"] in ["N/A", "n/a", "N/a", ""]:
+                        entity["país"] = focus if focus and focus != "auto" else val_placeholder
+                
                 unique_entities.append(entity)
 
         return {"entities": unique_entities, "detected_focus": focus}

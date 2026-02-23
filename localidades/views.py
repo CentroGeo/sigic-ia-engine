@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
                         "properties": {
                             "name": {"type": "string"},
                             "type": {"type": "string"},
-                            "context": {"type": "string"}
+                            "context": {"type": "string"},
+                            "país": {"type": "string"},
+                            "estado": {"type": "string"}
                         }
                     }
                 },
