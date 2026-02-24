@@ -16,7 +16,7 @@ def search_in_json_files(context, query, reasoning_model, server_url) -> List[Li
     Returns: List[List[str]] (rows_serializable)
     """
     try:
-        list_files_json = list(context.files.filter(document_type='application/json').values_list('id', flat=True))
+        list_files_json = list(context.files.filter(document_type__in=['application/json','text/csv']).values_list('id', flat=True))
         if not list_files_json:
             return []
 

@@ -42,8 +42,8 @@ model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
 def convert_to_uploadedfile(filepath, file_name=None):
-    #filename = os.path.basename(filepath)
-    filename = file_name
+    #filename = file_name
+    filename = file_name if file_name else os.path.basename(filepath)
     
     # Detectar content_type
     content_type, _ = mimetypes.guess_type(filepath)
@@ -177,17 +177,24 @@ def json_entry_to_text_and_metadata(entry):
 
 
 def extract_csv(file, file_size_mb):
-    chunks = []
+    chunks, originals, metadata = [], [], []
 
     def process_df(df):
+        # Obtener metadatos de columnas
+        first_row = df.to_dict(orient="records")[0] if not df.empty else {}
+        flat_meta = get_keys_and_types(first_row)
+
         df.fillna("(sin valor)", inplace=True)
         for _, row in df.iterrows():
+            row_dict = row.to_dict()
             texto = "\n".join(
                 f"{col.replace('_', ' ').capitalize()}: {limpiar_valor(val)}"
-                for col, val in row.items()
+                for col, val in row_dict.items()
             )
             if texto.strip():
                 chunks.append(texto.strip())
+                originals.append(row_dict)
+                metadata.append(flat_meta)
 
     try:
         if file_size_mb < MAX_MEMORY_MB:
@@ -199,15 +206,30 @@ def extract_csv(file, file_size_mb):
             ):
                 process_df(df_chunk)
 
-        return chunks
+        return chunks, originals, metadata
 
     except Exception as e:
         print(f"⚠️ Error procesando CSV: {e}")
-        return []
+        return [], [], []
 
 
 def extract_text_from_file(file):
-    ext = file.name.lower().split(".")[-1]
+    filename = file.name.lower()
+    if "." in filename:
+        ext = filename.split(".")[-1]
+    else:
+        # Fallback si no hay extensión en el nombre
+        content_type = getattr(file, 'content_type', '')
+        if 'csv' in content_type:
+            ext = 'csv'
+        elif 'json' in content_type:
+            ext = 'json'
+        elif 'pdf' in content_type:
+            ext = 'pdf'
+        elif 'word' in content_type:
+            ext = 'docx'
+        else:
+            ext = ''
 
     try:
         file.seek(0, 2)
@@ -239,9 +261,9 @@ def extract_text_from_file(file):
 
     # -------- CSV --------
     if ext == "csv":
-        chunks = extract_csv(file, file_size_mb)
+        chunks, originals, metadata = extract_csv(file, file_size_mb)
         print(f"🧩 CSV → {len(chunks)} chunks generados")
-        return chunks
+        return chunks, originals, metadata
 
     # -------- PDF --------
     if ext == "pdf":
@@ -643,14 +665,14 @@ def process_files(request, workspace, user_id):
 
         # --- Normalización estricta ---
         if isinstance(extracted, tuple):
-            # JSON → (chunks, originals, metadata)
+            # JSON o CSV estructurado → (chunks, originals, metadata)
             chunks, json_originals, metadata_chunks = extracted
             is_structured = True
 
         elif isinstance(extracted, list):
-            # CSV → lista de textos
+            # Caso de respaldo
             chunks = extracted
-            is_structured = True
+            is_structured = False
 
         elif isinstance(extracted, str):
             # PDF / TXT → texto plano
@@ -823,27 +845,35 @@ def process_files_catalog(request, workspace, user_id):
 
                                     # extraer texto
                                     uploaded_file.seek(0)
-                                    extracted_text = extract_text_from_file(
-                                        uploaded_file
-                                    )
+                                    extracted = extract_text_from_file(uploaded_file)
 
-                                    # Detectar idioma
-                                    language = embedder.detect_language(extracted_text)
+                                    json_originals = []
+                                    metadata_chunks = []
 
-                                    # Dividir texto en chunks
-                                    if isinstance(extracted_text, list):
-                                        # CSV o JSON serializado por registro → ya son chunks
-                                        chunks = extracted_text
+                                    if isinstance(extracted, tuple):
+                                        chunks, json_originals, metadata_chunks = extracted
+                                    elif isinstance(extracted, list):
+                                        chunks = extracted
                                     else:
-                                        try:
-                                            chunks = text_splitter.split_text(
-                                                extracted_text
-                                            )
-                                        except Exception as e:
-                                            print(
-                                                f"⚠️ Error al hacer split del texto: {str(e)}"
-                                            )
+                                        if extracted is None:
                                             chunks = []
+                                        else:
+                                            try:
+                                                chunks = text_splitter.split_text(
+                                                    extracted
+                                                )
+                                            except Exception as e:
+                                                print(
+                                                    f"⚠️ Error al hacer split del texto: {str(e)}"
+                                                )
+                                                chunks = []
+
+                                    try:
+                                        sample = " ".join(chunks[:3])
+                                        language = embedder.detect_language(sample)
+                                    except Exception as e:
+                                        print(f"⚠️ Error detectando idioma: {e}")
+                                        language = "unknown"
 
                                     # Generar embeddings por lotes (batch) para mejor rendimiento
                                     embeddings = embedder.embed_texts(chunks)
@@ -855,6 +885,8 @@ def process_files_catalog(request, workspace, user_id):
                                                 file=upload_file,
                                                 chunk_index=idx,
                                                 text=chunk,
+                                                text_json=json_originals[idx] if json_originals else None,
+                                                metadata_json=metadata_chunks[idx] if metadata_chunks else None,
                                                 embedding=embedding,
                                                 language=language,
                                                 metadata={
@@ -866,7 +898,9 @@ def process_files_catalog(request, workspace, user_id):
                                             for idx, (chunk, embedding) in enumerate(
                                                 zip(chunks, embeddings)
                                             )
-                                        ]
+                                            
+                                        ],
+                                        batch_size=500
                                     )
 
                                     upload_file.processed = True
@@ -884,13 +918,14 @@ def process_files_catalog(request, workspace, user_id):
                                     )
                     else:
                         filename = file_name
-                        # content_disp = response.headers.get("Content-Disposition", "")
-                        # if content_disp:
-                        #     match = re.findall('filename="?([^"]+)"?', content_disp)
-                        #     if match:
-                        #         filename = match[0]
-
-                        print("csv!!", filename, flush=True)
+                        content_disp = response.headers.get("Content-Disposition", "")
+                        if content_disp:
+                            match = re.findall('filename="?([^"]+)"?', content_disp)
+                            if match:
+                                filename = match[0]
+                                
+                                
+                        print("ELSE!!!!!", filename, flush=True)
                         file_path = os.path.join(tmpdir, filename)
                         with open(file_path, "wb") as f:
                             f.write(response.content)
@@ -920,25 +955,33 @@ def process_files_catalog(request, workspace, user_id):
 
                                 # extraer texto
                                 uploaded_file.seek(0)
-                                extracted_text = extract_text_from_file(uploaded_file)
+                                extracted = extract_text_from_file(uploaded_file)
 
-                                # Detectar idioma
-                                language = embedder.detect_language(extracted_text)
+                                json_originals = []
+                                metadata_chunks = []
 
-                                # Dividir texto en chunks
-                                if isinstance(extracted_text, list):
-                                    # CSV o JSON serializado por registro → ya son chunks
-                                    chunks = extracted_text
+                                if isinstance(extracted, tuple):
+                                    chunks, json_originals, metadata_chunks = extracted
+                                elif isinstance(extracted, list):
+                                    chunks = extracted
                                 else:
-                                    try:
-                                        chunks = text_splitter.split_text(
-                                            extracted_text
-                                        )
-                                    except Exception as e:
-                                        print(
-                                            f"⚠️ Error al hacer split del texto: {str(e)}"
-                                        )
+                                    if extracted is None:
                                         chunks = []
+                                    else:
+                                        try:
+                                            chunks = text_splitter.split_text(extracted)
+                                        except Exception as e:
+                                            print(
+                                                f"⚠️ Error al hacer split del texto: {str(e)}"
+                                            )
+                                            chunks = []
+
+                                try:
+                                    sample = " ".join(chunks[:3])
+                                    language = embedder.detect_language(sample)
+                                except Exception as e:
+                                    print(f"⚠️ Error detectando idioma: {e}")
+                                    language = "es"
 
                                 # Generar embeddings por lotes (batch) para mejor rendimiento
                                 embeddings = embedder.embed_texts(chunks)
@@ -950,6 +993,8 @@ def process_files_catalog(request, workspace, user_id):
                                             file=upload_file,
                                             chunk_index=idx,
                                             text=chunk,
+                                            text_json=json_originals[idx] if json_originals else None,
+                                            metadata_json=metadata_chunks[idx] if metadata_chunks else None,
                                             embedding=embedding,
                                             language=language,
                                             metadata={
@@ -960,8 +1005,9 @@ def process_files_catalog(request, workspace, user_id):
                                         )
                                         for idx, (chunk, embedding) in enumerate(
                                             zip(chunks, embeddings)
-                                        )
-                                    ]
+                                            )
+                                    ],
+                                    batch_size=500
                                 )
 
                                 upload_file.processed = True
