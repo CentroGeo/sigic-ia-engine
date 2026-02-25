@@ -2,10 +2,66 @@ import os
 import json
 import logging
 import requests
+import time
+from urllib.parse import quote
 from django.conf import settings
 from fileuploads.models import Context, DocumentEmbedding, Files
 
 logger = logging.getLogger(__name__)
+
+def fetch_osm_geometry(name, entity_type, country, state, geom_type="polygon"):
+    """
+    Intenta obtener la geometría (Polígono o Centroide) de un lugar desde Nominatim (OSM).
+    Arma una consulta ('q') robusta según el tipo de entidad.
+    """
+    base_url = "https://nominatim.openstreetmap.org/search"
+    
+    # Construir query según nivel de detalle
+    query_parts = [name]
+    if state and state != "No especificado":
+        query_parts.append(state)
+    if country and country != "No especificado":
+        query_parts.append(country)
+        
+    query = ", ".join(query_parts)
+    
+    params = {
+        'q': query,
+        'format': 'json',
+        'limit': 1
+    }
+
+    if geom_type == "polygon":
+        params['polygon_geojson'] = 1
+    
+    headers = {
+        'User-Agent': 'SIGIC-IA-Engine/1.0 (Integration for GeoJSON)'
+    }
+    
+    try:
+        response = requests.get(base_url, params=params, headers=headers, timeout=5)
+        if response.status_code == 200:
+            results = response.json()
+            if results and len(results) > 0:
+                first_result = results[0]
+                
+                if geom_type == "polygon":
+                    geojson_geom = first_result.get("geojson")
+                    # Garantizar que realmente sea un polígono
+                    if geojson_geom and geojson_geom.get("type") in ["Polygon", "MultiPolygon"]:
+                        return geojson_geom
+                elif geom_type == "centroid":
+                    lat = first_result.get("lat")
+                    lon = first_result.get("lon")
+                    if lat and lon:
+                        return {
+                            "type": "Point",
+                            "coordinates": [float(lon), float(lat)]
+                        }
+    except Exception as e:
+        logger.warning(f"Error consultando Nominatim para '{query}': {e}")
+        
+    return None
 
 def get_system_prompt(focus="México", entity_types=None):
     if not entity_types:
@@ -101,13 +157,14 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson"):
+def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson", geometry_type="point"):
     # (El cuerpo comienza con validaciones, agregamos export_format a la definicion y pasamos al final)
     """
     Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
     Si focus es None o 'auto', intenta detectarlo automáticamente del texto.
     Acepta 'context_id' o una lista explícita de 'file_ids'.
     'entity_types' permite filtrar la extracción (ej. ['país', 'estado', 'municipio', 'localidad', 'infraestructura'])
+    'geometry_type' permite cambiar el tipo de geometría final. 'point' (default del LLM), 'centroid' u 'polygon' vía OSM.
     """
     server = settings.OLLAMA_API_URL
     
@@ -268,16 +325,36 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                 
                 unique_entities.append(entity)
                 
-                # Construcción del Feature GeoJSON
-                # Verificamos que las coordenadas sean un array de 2 números
+                # Construcción del Feature GeoJSON base
+                # Verificamos que las coordenadas locales sean un array de 2 números
                 is_valid_coords = isinstance(coords, list) and len(coords) == 2 and all(isinstance(c, (int, float)) for c in coords)
                 
+                geometry = {
+                    "type": "Point",
+                    "coordinates": coords
+                } if is_valid_coords else None
+                
+                # Si el usuario solicitó polígonos o centroides oficiales, intentamos buscarlo en Nominatim
+                geometry_type_clean = str(geometry_type).lower()
+                if geometry_type_clean in ["polygon", "centroid"]:
+                    # Pausa breve para respetar políticas de Nominatim (1 req/sec)
+                    time.sleep(1)
+                    osm_geom = fetch_osm_geometry(
+                        name=name_clean,
+                        entity_type=etype_clean,
+                        country=entity.get("país"),
+                        state=entity.get("estado"),
+                        geom_type=geometry_type_clean
+                    )
+                    if osm_geom:
+                        geometry = osm_geom
+                        entity[f"osm_{geometry_type_clean}_found"] = True
+                    else:
+                        entity[f"osm_{geometry_type_clean}_found"] = False
+
                 feature = {
                     "type": "Feature",
-                    "geometry": {
-                        "type": "Point",
-                        "coordinates": coords
-                    } if is_valid_coords else None,
+                    "geometry": geometry,
                     "properties": entity
                 }
                 geojson_features.append(feature)
@@ -288,7 +365,6 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
         }
 
         # Guardar archivo descargable
-        import time
         import geopandas as gpd
         import shutil
         import uuid
