@@ -30,30 +30,39 @@ logger = logging.getLogger(__name__)
                     "type": "object",
                     "description": "Objeto FeatureCollection válido de GeoJSON georreferenciado."
                 },
+                "download_url": {
+                    "type": "string",
+                    "description": "URL pública para descargar el archivo .geojson mapeado."
+                },
                 "detected_focus": {"type": "string"}
             },
         }
     },
-    summary="Detectar localidades en un contexto",
-    description="Analiza los documentos de un contexto por id y extrae entidades geográficas (localidades, municipios, estados).",
+    summary="Detectar localidades en documentos",
+    description="Analiza los documentos de un contexto o un arreglo de archivos específicos para extraer entidades geográficas.",
     tags=["Localidades"],
 )
 @api_view(["POST"])
 def detect_localidades(request):
     """
-    Endpoint para detectar localidades en un contexto.
-    Recibe: {"context_id": id_del_contexto, "model": "..."}
+    Endpoint para detectar localidades.
+    Recibe: {"context_id": id, "file_ids": [id1, id2], "model": "...", "focus": "...", "entity_types": ["país", "infraestructura", ...]}
     """
     data = request.data
     context_id = data.get("context_id")
+    file_ids = data.get("file_ids")
+    entity_types = data.get("entity_types")
     model = data.get("model", "deepseek-r1:32b") # Fallback a deepseek-r1 si no viene
     focus = data.get("focus", "México")
 
-    if not context_id:
-        return Response({"error": "Se requiere el parámetro 'context_id'"}, status=status.HTTP_400_BAD_REQUEST)
+    if not context_id and not file_ids:
+        return Response({"error": "Se requiere el parámetro 'context_id' o un arreglo de 'file_ids'"}, status=status.HTTP_400_BAD_REQUEST)
 
-    logger.info(f"Detectando localidades para el context_id: {context_id}, focus: {focus}")
+    logger.info(f"Detectando localidades. context_id: {context_id}, file_ids: {file_ids}, focus: {focus}, entity_types: {entity_types}")
     
-    result = extract_localities_from_context(context_id, model, focus)
+    result = extract_localities_from_context(context_id=context_id, model=model, focus=focus, file_ids=file_ids, entity_types=entity_types)
     
+    if "error" in result:
+        return Response(result, status=status.HTTP_400_BAD_REQUEST)
+        
     return Response(result, status=status.HTTP_200_OK)

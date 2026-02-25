@@ -3,45 +3,65 @@ import json
 import logging
 import requests
 from django.conf import settings
-from fileuploads.models import Context, DocumentEmbedding
+from fileuploads.models import Context, DocumentEmbedding, Files
 
 logger = logging.getLogger(__name__)
 
-def get_system_prompt(focus="México"):
+def get_system_prompt(focus="México", entity_types=None):
+    if not entity_types:
+        entity_types = ["país", "estado", "municipio", "localidad"]
+        
+    valid_types = ["país", "estado", "municipio", "localidad", "infraestructura"]
+    entity_types = [t for t in entity_types if t in valid_types]
+    if not entity_types:
+        entity_types = ["país", "estado", "municipio", "localidad"]
+        
+    types_str = " | ".join(entity_types)
+    types_list_str = ", ".join([f"'{t}'" for t in entity_types])
+    
+    incluye_infra = "infraestructura" in entity_types
+    
+    exclusions = "10. EXCLUSIONES: Edificios, monumentos, parques naturales, museos, universidades, y sitios arqueológicos."
+    infra_rule = ""
+    if incluye_infra:
+        exclusions = "10. EXCLUSIONES: Palabras aleatorias que no sean lugares geográficos concretos."
+        infra_rule = "- ¿Es una INFRAESTRUCTURA/EDIFICIO/SITIO? (SÍ) -> 'Hospital Juárez', 'Museo de Antropología', 'Puente Baluarte', 'Universidad' -> (Tipo: 'infraestructura')"
+
     return f"""
 Eres un extractor de entidades geográficas y geocodificador simultáneo.
-Tu tarea es analizar el texto proporcionado y extraer exclusivamente las JURISDICCIONES POLÍTICO-ADMINISTRATIVAS (países, estados, municipios o localidades).
+Tu tarea es analizar el texto proporcionado y extraer exclusivamente las JURISDICCIONES POLÍTICO-ADMINISTRATIVAS e INFRAESTRUCTURAS solicitadas.
 
 REGLAS ABSOLUTAS:
 1. Devuelve la información en formato JSON.
 2. NO incluyas explicaciones ni texto adicional fuera del JSON.
 3. Si no encuentras ninguna entidad geográfica, devuelve una lista vacía.
-4. Categoriza cada hallazgo ESTRICTAMENTE como 'país', 'estado', 'municipio' o 'localidad'.
+4. Categoriza cada hallazgo ESTRICTAMENTE como uno de los siguientes: {types_list_str}. Ignora los que no correspondan.
 5. PROHIBIDO INFERIR: No agregues lugares que no estén mencionados literalmente en el texto. El "context" DEBE incluir la palabra detectada.
 6. ESTRICTO CUMPLIMIENTO DEL JSON: NUNCA omitas el campo "context", ni las "coordenadas". ESTÁ PROHIBIDO responder con "N/A" en los campos de estado y país. Si no tienes la información, escribe "No especificado".
 7. DEPENDENCIAS JERÁRQUICAS OBLIGATORIAS:
    - Si la entidad es un 'estado', DEBES agregar un campo 'país'.
-   - Si la entidad es un 'municipio' o 'localidad', DEBES agregar 'estado' y 'país'.
+   - Si la entidad es un 'municipio', 'localidad' o 'infraestructura', DEBES agregar 'estado' y 'país'.
 8. REGLAS DE CLASIFICACIÓN (EVITA ERRORES COMUNES):
    - NUNCA clasifiques a un país soberano (ej. Francia, Japón, México) como "estado". Los países siempre son "país".
    - Si un nombre puede referirse a un Estado y a un Municipio a la vez (ej. Puebla, Querétaro, Oaxaca), analiza el contexto.
 9. COORDENADAS: Para cada lugar, estima sus coordenadas reales y devuélvelas en un arreglo numérico [longitud, latitud]. OBLIGATORIO escribir primero longitud y luego latitud.
-10. EXCLUSIONES: Edificios, monumentos, parques naturales, museos, universidades, y sitios arqueológicos.
+{exclusions}
 
 CRITERIO DE ACEPTACIÓN:
    - ¿Es un PAÍS SOBERANO? (SÍ) -> "China", "Francia" -> (Tipo: 'país')
    - ¿Es un ESTADO/PROVINCIA/DEPARTAMENTO? (SÍ) -> "Yucatán", "Normandía" -> (Tipo: 'estado')
    - ¿Es una CIUDAD/LOCALIDAD/PUEBLO? (SÍ) -> "París" -> (Tipo: 'municipio' o 'localidad')
+   {infra_rule}
 
 FORMATO DE SALIDA ESPERADO:
 {{
   "entities": [
     {{
-      "name": "Nombre exacto del país, estado, municipio o localidad",
-      "type": "país | estado | municipio | localidad",
+      "name": "Nombre exacto de la entidad",
+      "type": "{types_str}",
       "context": "EXTRAE Y COPIA LA ORACIÓN COMPLETA (entre 10 y 30 palabras) del texto original donde aparece el lugar. ESTÁ PROHIBIDO poner solo el nombre del lugar aquí.",
-      "país": "Nombre del país al que pertenece (sólo si type es estado, municipio o localidad)",
-      "estado": "Nombre del estado o provincia al que pertenece (sólo si type es municipio o localidad)",
+      "país": "Nombre del país al que pertenece (sólo si type no es país)",
+      "estado": "Nombre del estado o provincia al que pertenece (sólo si type no es país ni estado)",
       "coordenadas": [longitud, latitud]
     }}
   ]
@@ -81,16 +101,27 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=None):
+def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None):
     """
-    Usa Ollama para extraer localidades de los documentos de un contexto, con enfoque geográfico configurable.
+    Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
     Si focus es None o 'auto', intenta detectarlo automáticamente del texto.
+    Acepta 'context_id' o una lista explícita de 'file_ids'.
+    'entity_types' permite filtrar la extracción (ej. ['país', 'estado', 'municipio', 'localidad', 'infraestructura'])
     """
     server = settings.OLLAMA_API_URL
     
     try:
-        context_obj = Context.objects.get(id=context_id)
-        files = context_obj.files.all()
+        # Obtener los archivos a procesar según los parámetros
+        if context_id and file_ids:
+            context_obj = Context.objects.get(id=context_id)
+            files = context_obj.files.filter(id__in=file_ids)
+        elif context_id:
+            context_obj = Context.objects.get(id=context_id)
+            files = context_obj.files.all()
+        elif file_ids:
+            files = Files.objects.filter(id__in=file_ids)
+        else:
+            return {"entities": [], "error": "Se requiere context_id o file_ids."}
         
         all_entities = []
         BATCH_SIZE = 5
@@ -111,7 +142,7 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             else:
                 focus = "México"
         
-        system_prompt = get_system_prompt(focus)
+        system_prompt = get_system_prompt(focus, entity_types)
         
         for file in files:
             chunks = DocumentEmbedding.objects.filter(file=file).order_by('chunk_index')
@@ -150,6 +181,12 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             "santuario", "templo", "fortaleza", "castillo", "monasterio", "calle", "avenida"
         ]
         
+        incluye_infra = (entity_types and "infraestructura" in entity_types)
+        if incluye_infra:
+            BLACKLIST = ["calle", "avenida"]  # Reducimos blacklist solo a vialidades si piden infraestructura
+            
+        valid_requested = entity_types if entity_types else ["país", "estado", "municipio", "localidad"]
+        
         for entity in all_entities:
             # Algunas veces Ollama podría no devolver el key
             name = entity.get("name", "")
@@ -163,13 +200,23 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             
             # Homologar tipo (si dice ciudad, pueblo o aldea -> municipio o localidad)
             etype_lower = etype.strip().lower()
-            if etype_lower not in ["país", "estado", "localidad", "municipio"]:
-                etype_clean = "localidad"  # Ante la duda (ej. ciudad, poblado), marcar como localidad
+            
+            if etype_lower in ["ciudad", "pueblo", "aldea"]:
+                etype_clean = "localidad" if "localidad" in valid_requested else ("municipio" if "municipio" in valid_requested else etype_lower)
+            elif etype_lower in ["edificio", "museo", "parque", "universidad", "infraestructura"]:
+                etype_clean = "infraestructura" if "infraestructura" in valid_requested else etype_lower
             else:
                 etype_clean = etype_lower
+                
+            # Si el clasificado final no esta en la lista valid_requested, lo forzamos o descartamos
+            if etype_clean not in valid_requested:
+                if "localidad" in valid_requested:
+                    etype_clean = "localidad"
+                else:
+                    continue  # Descartamos porque no pertenece a lo solicitado
             
-            # Regla 1: Longitud excesiva (probablemente una descripción o nombre de sitio en vez de ciudad)
-            if len(name_clean.split()) > 5:
+            # Regla 1: Longitud excesiva (probablemente una descripción)
+            if len(name_clean.split()) > (8 if incluye_infra else 5):
                 continue
                 
             # Regla 2: Palabras prohibidas
@@ -227,7 +274,26 @@ def extract_localities_from_context(context_id, model="deepseek-r1:32b", focus=N
             "features": geojson_features
         }
 
-        return {"entities": unique_entities, "geojson": geojson_data, "detected_focus": focus}
+        # Guardar archivo descargable
+        import time
+        timestamp = int(time.time())
+        prefix = f"ctx_{context_id}" if context_id else f"files_{len(file_ids)}"
+        filename = f"localidades_{prefix}_{timestamp}.geojson"
+        geojsons_dir = os.path.join(settings.MEDIA_ROOT, "geojsons")
+        os.makedirs(geojsons_dir, exist_ok=True)
+        file_path = os.path.join(geojsons_dir, filename)
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+
+        file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+
+        return {
+            "entities": unique_entities,
+            "geojson": geojson_data,
+            "download_url": file_url,
+            "detected_focus": focus
+        }
 
     except Exception as e:
         logger.error(f"Error extrayendo localidades del contexto: {str(e)}")
