@@ -101,7 +101,8 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None):
+def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson"):
+    # (El cuerpo comienza con validaciones, agregamos export_format a la definicion y pasamos al final)
     """
     Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
     Si focus es None o 'auto', intenta detectarlo automáticamente del texto.
@@ -143,7 +144,9 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                 focus = "México"
         
         system_prompt = get_system_prompt(focus, entity_types)
-        
+        print(system_prompt,flush=True)
+
+
         for file in files:
             chunks = DocumentEmbedding.objects.filter(file=file).order_by('chunk_index')
             total_chunks = chunks.count()
@@ -226,6 +229,16 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             # Regla 3: No es dígito ni símbolo
             if any(char.isdigit() for char in name_clean):
                continue
+               
+            # Regla 4: Anti-alucinaciones de contexto
+            context_text = entity.get("context", "").lower()
+            if context_text and context_text != "contexto no proporcionado por el modelo.":
+                # Si el modelo alucina (ej. "Puebla") sin estar en el texto exacto, lo descartamos
+                # Comparamos si al menos la palabra del lugar o alguna de sus piezas principales está
+                name_words = [w for w in name_lower.split() if len(w) > 3]
+                if name_lower not in context_text:
+                    if not name_words or not any(w in context_text for w in name_words):
+                        continue # Evidencia de alucinación o no coincidencia literal
                 
             key = (name_clean.lower(), etype_clean)
             if key not in seen:
@@ -276,21 +289,72 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
 
         # Guardar archivo descargable
         import time
+        import geopandas as gpd
+        import shutil
+        import uuid
+        
         timestamp = int(time.time())
         prefix = f"ctx_{context_id}" if context_id else f"files_{len(file_ids)}"
-        filename = f"localidades_{prefix}_{timestamp}.geojson"
+        base_filename = f"localidades_{prefix}_{timestamp}"
         geojsons_dir = os.path.join(settings.MEDIA_ROOT, "geojsons")
         os.makedirs(geojsons_dir, exist_ok=True)
-        file_path = os.path.join(geojsons_dir, filename)
-
-        with open(file_path, "w", encoding="utf-8") as f:
-            json.dump(geojson_data, f, ensure_ascii=False, indent=2)
-
-        file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+        
+        # Validar export_format
+        export_format = str(export_format).lower()
+        if export_format not in ["geojson", "shp", "gpkg"]:
+            export_format = "geojson"
+            
+        file_url = ""
+        
+        if export_format == "geojson":
+            filename = f"{base_filename}.geojson"
+            file_path = os.path.join(geojsons_dir, filename)
+            with open(file_path, "w", encoding="utf-8") as f:
+                json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+            file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+            
+        else:
+            # Requerimos geopandas para shp y gpkg
+            # Convertimos el FeatureCollection dict a GeoDataFrame
+            if geojson_features:
+                gdf = gpd.GeoDataFrame.from_features(geojson_data["features"])
+                # Forzar CRS WGS84 ya que las coordenadas LLM vienen como lon, lat standard
+                gdf.set_crs(epsg=4326, inplace=True)
+            else:
+                # Si está vacío creamos uno en blanco con columnas básicas para evitar fallos
+                import pandas as pd
+                from shapely.geometry import Point
+                gdf = gpd.GeoDataFrame(pd.DataFrame(columns=["name", "type", "context", "país", "estado"]), geometry=[], crs="EPSG:4326")
+            
+            if export_format == "gpkg":
+                filename = f"{base_filename}.gpkg"
+                file_path = os.path.join(geojsons_dir, filename)
+                gdf.to_file(file_path, driver="GPKG", layer="localidades")
+                file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+                
+            elif export_format == "shp":
+                # Un shapefile son varios archivos, así que creamos un temporal, guardamos y comprimimos en zip
+                temp_shp_dir = os.path.join(geojsons_dir, f"shp_{base_filename}")
+                os.makedirs(temp_shp_dir, exist_ok=True)
+                
+                shp_path = os.path.join(temp_shp_dir, f"{base_filename}.shp")
+                gdf.to_file(shp_path, driver="ESRI Shapefile")
+                
+                zip_filename = f"{base_filename}.zip"
+                zip_path = os.path.join(geojsons_dir, zip_filename)
+                
+                # Crear el zip de todo el directorio
+                shutil.make_archive(zip_path.replace('.zip', ''), 'zip', temp_shp_dir)
+                
+                # Limpiar la carpeta temporal suelta
+                shutil.rmtree(temp_shp_dir)
+                
+                file_url = f"{settings.MEDIA_URL}geojsons/{zip_filename}"
 
         return {
             "entities": unique_entities,
             "geojson": geojson_data,
+            "export_format": export_format,
             "download_url": file_url,
             "detected_focus": focus
         }

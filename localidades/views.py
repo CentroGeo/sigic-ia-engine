@@ -32,21 +32,25 @@ logger = logging.getLogger(__name__)
                 },
                 "download_url": {
                     "type": "string",
-                    "description": "URL pública para descargar el archivo .geojson mapeado."
+                    "description": "URL pública para descargar el archivo georreferenciado mapeado (.geojson, .shp.zip, .gpkg)."
+                },
+                "export_format": {
+                    "type": "string",
+                    "description": "Formato de exportación elegido por el usuario (geojson, shp, gpkg)."
                 },
                 "detected_focus": {"type": "string"}
             },
         }
     },
     summary="Detectar localidades en documentos",
-    description="Analiza los documentos de un contexto o un arreglo de archivos específicos para extraer entidades geográficas.",
+    description="Analiza los documentos de un contexto o un arreglo de archivos específicos para extraer entidades geográficas y exportarlas temporalmente.",
     tags=["Localidades"],
 )
 @api_view(["POST"])
 def detect_localidades(request):
     """
     Endpoint para detectar localidades.
-    Recibe: {"context_id": id, "file_ids": [id1, id2], "model": "...", "focus": "...", "entity_types": ["país", "infraestructura", ...]}
+    Recibe: {"context_id": id, "file_ids": [id1, id2], "model": "...", "focus": "...", "entity_types": ["país", "infraestructura", ...], "export_format": "geojson|shp|gpkg"}
     """
     data = request.data
     context_id = data.get("context_id")
@@ -54,13 +58,14 @@ def detect_localidades(request):
     entity_types = data.get("entity_types")
     model = data.get("model", "deepseek-r1:32b") # Fallback a deepseek-r1 si no viene
     focus = data.get("focus", "México")
+    export_format = data.get("export_format", "geojson")
 
     if not context_id and not file_ids:
         return Response({"error": "Se requiere el parámetro 'context_id' o un arreglo de 'file_ids'"}, status=status.HTTP_400_BAD_REQUEST)
 
-    logger.info(f"Detectando localidades. context_id: {context_id}, file_ids: {file_ids}, focus: {focus}, entity_types: {entity_types}")
+    logger.info(f"Detectando localidades. context_id: {context_id}, file_ids: {file_ids}, focus: {focus}, entity_types: {entity_types}, format: {export_format}")
     
-    result = extract_localities_from_context(context_id=context_id, model=model, focus=focus, file_ids=file_ids, entity_types=entity_types)
+    result = extract_localities_from_context(context_id=context_id, model=model, focus=focus, file_ids=file_ids, entity_types=entity_types, export_format=export_format)
     
     if "error" in result:
         return Response(result, status=status.HTTP_400_BAD_REQUEST)
