@@ -10,6 +10,7 @@ services:
     container_name: ia-engine
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "geonode.dev.geoint.mx:10.2.7.26"
     volumes:
       - .:/app
     ports:
@@ -30,6 +31,7 @@ services:
     container_name: modulo-ia-celery
     extra_hosts:
       - "host.docker.internal:host-gateway"
+      - "geonode.dev.geoint.mx:10.2.7.26"
     volumes:
       - .:/app
     depends_on:

@@ -119,37 +119,8 @@ def generate_report(request: Request):
 
     file_format = data.get("file_format", "pdf")
 
-    # -----------------------------------------------------------------------
-    # BLOQUE DE PRESENTACIONES (para Fernando)
-    # -----------------------------------------------------------------------
-    # Si el frontend solicita file_format="pptx", la generación sigue un
-    # flujo diferente basado en pptx_spec_generator.py (síncrono por ahora).
-    #
-    # TODO (Fernando): descomenta y adapta este bloque cuando integres
-    #                  la generación de presentaciones al flujo de Report.
-    #
-    # if file_format == "pptx":
-    #     from reports.services.pptx_spec_generator import generate_presentation_spec
-    #     from reports.renderers.pptx_renderer import render_pptx_from_spec
-    #
-    #     spec = generate_presentation_spec(
-    #         report_name=data["report_name"],
-    #         report_type=data["report_type"],        # p.ej. "institutional"
-    #         guided_prompt=data.get("instructions", ""),
-    #         file_ids=data["file_ids"],
-    #         top_k=data.get("top_k", 20),
-    #     )
-    #     pptx_bytes = render_pptx_from_spec(spec)
-    #
-    #     # Guardar archivo y construir URL (ver lógica en generate_pptx_report)
-    #     # ...
-    #
-    #     return Response({"report_id": report.id, "download_url": download_url},
-    #                     status=status.HTTP_200_OK)
-    #
-    # -----------------------------------------------------------------------
-    # FIN BLOQUE PRESENTACIONES
-    # -----------------------------------------------------------------------
+    # Todos los formatos (pdf, word, csv, pptx) se procesan en generate_report_task.
+    # La integración PPTX de Fernando está marcada como bloque comentado en tasks.py.
 
     report = Report.objects.create(
         context=context,
@@ -172,7 +143,8 @@ def generate_report(request: Request):
     # Disparar tarea Celery
     from reports.tasks import generate_report_task
     base_url = request.build_absolute_uri("/").rstrip("/")
-    task = generate_report_task.delay(report.id, base_url)
+    authorization = request.headers.get("Authorization", "")
+    task = generate_report_task.delay(report.id, base_url, authorization)
 
     report.task_id = task.id
     report.save(update_fields=["task_id", "updated_date"])
