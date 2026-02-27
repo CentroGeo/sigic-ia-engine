@@ -60,8 +60,19 @@ def _upload_to_geonode(
 
         doc_id = doc_url.strip("/").split("/")[-1]
 
-        meta = get_geonode_document_uuid_by_id(doc_id, authorization=authorization)
-        geonode_url = meta.get("url_download")
+        # La subida fue exitosa; intentar obtener la URL de descarga via metadata API.
+        # Si esa llamada falla (DNS transitorio, timeout), construimos la URL desde el
+        # patrón conocido para no perder la subida ya realizada.
+        geonode_url = None
+        try:
+            meta = get_geonode_document_uuid_by_id(doc_id, authorization=authorization)
+            geonode_url = meta.get("url_download")
+        except Exception as meta_exc:
+            print(f"[REPORT] get_geonode_document_uuid_by_id falló ({meta_exc}), usando URL por patrón")
+
+        if not geonode_url:
+            geonode_base = os.getenv("GEONODE_SERVER", "").rstrip("/")
+            geonode_url = f"{geonode_base}/documents/{doc_id}/download"
 
         print(f"[REPORT] GeoNode upload OK: doc_id={doc_id}, url={geonode_url}")
         return {"geonode_id": int(doc_id), "geonode_url": geonode_url}
@@ -112,54 +123,46 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         print(f"[REPORT] report_id={report_id} file_format={report.file_format} file_ids={file_ids}")
 
         # -----------------------------------------------------------------------
-        # INTEGRACIÓN PPTX — Fernando
+        # Flujo PPTX
         # -----------------------------------------------------------------------
-        # Descomenta y completa este bloque cuando integres la generación de
-        # presentaciones al flujo del task. El bloque debe:
-        #   1. Generar los bytes del .pptx (pptx_bytes)
-        #   2. Llamar a _upload_to_geonode(...) para subir a GeoNode, o bien
-        #      a _save_local(...) como fallback
-        #   3. Guardar geonode_id/geonode_url o file_path en el reporte
-        #   4. Retornar {"report_id": report_id, "download_url": download_url}
-        #
-        # if report.file_format == "pptx":
-        #     from reports.services.pptx_spec_generator import generate_presentation_spec
-        #     from reports.renderers.pptx_renderer import render_pptx_from_spec
-        #
-        #     spec = generate_presentation_spec(
-        #         report_name=report.report_name,
-        #         report_type=report.report_type,
-        #         guided_prompt=report.instructions,
-        #         file_ids=file_ids,
-        #         top_k=5,
-        #     )
-        #     pptx_bytes = render_pptx_from_spec(spec)
-        #
-        #     safe_name = slugify(report.report_name)[:60] or "report"
-        #     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        #     filename = f"{safe_name}_{timestamp}.pptx"
-        #
-        #     geonode_result = _upload_to_geonode(
-        #         pptx_bytes, filename,
-        #         "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-        #         report.report_name, authorization,
-        #     )
-        #     if geonode_result:
-        #         report.geonode_id = geonode_result["geonode_id"]
-        #         report.geonode_url = geonode_result["geonode_url"]
-        #         download_url = geonode_result["geonode_url"]
-        #     else:
-        #         rel_path = _save_local(pptx_bytes, filename, report.context_id, report_id)
-        #         report.file_path = rel_path
-        #         media_url = getattr(settings, "MEDIA_URL", "/media/")
-        #         download_url = base_url.rstrip("/") + media_url + rel_path
-        #     report.status = "done"
-        #     report.save(update_fields=["geonode_id", "geonode_url", "file_path", "status", "updated_date"])
-        #     return {"report_id": report_id, "download_url": download_url}
-        # -----------------------------------------------------------------------
+        if report.file_format == "pptx":
+            from reports.services.pptx_spec_generator import generate_presentation_spec
+            from reports.renderers.pptx_renderer import render_pptx_from_spec
+
+            spec = generate_presentation_spec(
+                report_name=report.report_name,
+                report_type=report.report_type,
+                guided_prompt=report.instructions,
+                file_ids=file_ids,
+                top_k=5,
+            )
+            pptx_bytes = render_pptx_from_spec(spec)
+
+            safe_name = slugify(report.report_name)[:60] or "report"
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"{safe_name}_{timestamp}.pptx"
+
+            geonode_result = _upload_to_geonode(
+                pptx_bytes, filename,
+                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+                report.report_name, authorization,
+            )
+            if geonode_result:
+                report.geonode_id = geonode_result["geonode_id"]
+                report.geonode_url = geonode_result["geonode_url"]
+                download_url = geonode_result["geonode_url"]
+            else:
+                rel_path = _save_local(pptx_bytes, filename, report.context_id, report_id)
+                report.file_path = rel_path
+                media_url = getattr(settings, "MEDIA_URL", "/media/")
+                download_url = base_url.rstrip("/") + media_url + rel_path
+            report.status = "done"
+            report.save(update_fields=["geonode_id", "geonode_url", "file_path", "status", "updated_date"])
+            print(f"[REPORT] done (pptx) → {download_url}")
+            return {"report_id": report_id, "download_url": download_url}
 
         # -----------------------------------------------------------------------
-        # Flujo PDF / Word / CSV
+        # Flujo PDF / Word / CSV / TXT
         # -----------------------------------------------------------------------
 
         # 2. RAG search
@@ -181,7 +184,9 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
 
         # 4. Construir mensajes para el LLM
         prompt_output_format = (
-            "csv" if report.file_format == "csv" else report.output_format
+            "csv"        if report.file_format == "csv"
+            else "plain_text" if report.file_format == "txt"
+            else report.output_format
         )
         messages = build_prompt(
             report_type=report.report_type,
@@ -199,11 +204,12 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         file_bytes = _render(content, report.file_format, report.output_format)
 
         # 7. Determinar extensión, filename y content-type
-        ext_map = {"pdf": "pdf", "word": "docx", "csv": "csv"}
+        ext_map = {"pdf": "pdf", "word": "docx", "csv": "csv", "txt": "txt"}
         ct_map = {
             "pdf": "application/pdf",
             "word": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
             "csv": "text/csv",
+            "txt": "text/plain",
         }
         ext = ext_map.get(report.file_format, "bin")
         content_type = ct_map.get(report.file_format, "application/octet-stream")
@@ -259,6 +265,10 @@ def _render(content: str, file_format: str, output_format: str) -> bytes:
     elif file_format == "csv":
         from reports.renderers.csv_renderer import render_csv
         return render_csv(content)
+
+    elif file_format == "txt":
+        from reports.renderers.txt_renderer import render_txt
+        return render_txt(content)
 
     else:
         raise ValueError(f"file_format no soportado: {file_format}")

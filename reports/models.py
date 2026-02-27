@@ -19,6 +19,7 @@ class Report(models.Model):
         ("word", "Word (.docx)"),
         ("csv", "CSV"),
         ("pptx", "PowerPoint (.pptx)"),
+        ("txt", "Texto plano (.txt)"),
     ]
     STATUS_CHOICES = [
         ("pending", "Pendiente"),

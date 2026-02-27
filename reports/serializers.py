@@ -5,22 +5,7 @@ from reports.models import Report
 
 
 # ---------------------------------------------------------------------------
-# Serializer existente (PPTX)
-# ---------------------------------------------------------------------------
-
-class PptxReportRequestSerializer(serializers.Serializer):
-    report_name = serializers.CharField()
-    report_type = serializers.CharField()
-    guided_prompt = serializers.CharField(required=False, allow_blank=True, default="")
-    file_ids = serializers.ListField(
-        child=serializers.IntegerField(),
-        allow_empty=False
-    )
-    top_k = serializers.IntegerField(required=False, default=20, min_value=1, max_value=50)
-
-
-# ---------------------------------------------------------------------------
-# Nuevos serializers
+# Serializers
 # ---------------------------------------------------------------------------
 
 class ReportCreateSerializer(serializers.Serializer):
@@ -39,8 +24,7 @@ class ReportCreateSerializer(serializers.Serializer):
         required=False,
     )
     file_format = serializers.ChoiceField(
-        # "pptx" está reservado para el flujo de presentaciones (Fernando)
-        choices=["pdf", "word", "csv", "pptx"],
+        choices=["pdf", "word", "csv", "pptx", "txt"],
         default="pdf",
         required=False,
     )

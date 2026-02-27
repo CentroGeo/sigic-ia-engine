@@ -1,101 +1,21 @@
-import os
 from django.conf import settings
-from django.http import JsonResponse
-from django.utils.text import slugify
-from django.utils.crypto import get_random_string
 from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.request import Request
 from rest_framework.response import Response
 from rest_framework import status
 
 from reports.serializers import (
-    PptxReportRequestSerializer,
     ReportCreateSerializer,
     ReportSerializer,
     ReportListSerializer,
 )
-from reports.services.pptx_spec_generator import generate_presentation_spec
-from reports.renderers.pptx_renderer import render_pptx_from_spec
 from reports.models import Report
 from fileuploads.models import Context, Files
 from shared.authentication import KeycloakAuthentication
-from django.core.files.uploadedfile import SimpleUploadedFile
-from fileuploads.utils import upload_image_to_geonode
-
 
 
 # ---------------------------------------------------------------------------
-# Vista existente (PPTX)
-# ---------------------------------------------------------------------------
-@api_view(["POST"])
-def generate_pptx_report(request):
-    ser = PptxReportRequestSerializer(data=request.data)
-    ser.is_valid(raise_exception=True)
-    data = ser.validated_data
-
-    spec = generate_presentation_spec(
-        report_name=data["report_name"],
-        report_type=data["report_type"],
-        guided_prompt=data.get("guided_prompt", ""),
-        file_ids=data["file_ids"],
-        top_k=data.get("top_k", 20),
-    )
-
-    pptx_bytes = render_pptx_from_spec(spec)
-
-    # nombrado  del file
-    base_name = data.get("report_name") or "report"
-    if base_name.lower().endswith(".pptx"):
-        base_name = base_name[:-5]
-    base_name = slugify(base_name)[:60] or "report"
-    filename = f"{base_name}-{get_random_string(8)}.pptx"
-
-    #  aquí se crea un archivo compatible con la función  upload_image_to_geonode
-    pptx_uploaded = SimpleUploadedFile(
-        name=filename,
-        content=pptx_bytes,
-        content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
-    )
-
-    token = request.headers.get("Authorization")
-    if not token:
-        return JsonResponse({"error": "Missing Authorization header"}, status=401)
-
-    # se realiza la carga a geonode
-    resp = upload_image_to_geonode(pptx_uploaded, filename=filename, token=token)
-
-    # print("=== GEONODE UPLOAD STATUS ===", resp.status_code)
-    # print("=== GEONODE UPLOAD TEXT ===", resp.text[:800])
-
-    try:
-        payload = resp.json()
-    except Exception:
-        payload = {"raw": resp.text}
-
-    if resp.status_code >= 400:
-        return JsonResponse(
-            {"error": "upload_failed", "upstream_status": resp.status_code, "upstream": payload},
-            status=502,
-        )
-
-    #  construcción de la URL final
-    geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
-    url = payload.get("url") or payload.get("download_url") or ""
-
-    if url.startswith("/"):
-        url = geonode_base + url
-
-    return JsonResponse(
-        {
-            "download_url": url,
-            "filename": filename,
-            "geonode_raw": payload,  # opcional, luego  se puede quitar
-        }
-    )
-
-
-# ---------------------------------------------------------------------------
-# Nuevas vistas
+# Vistas
 # ---------------------------------------------------------------------------
 
 @api_view(["POST"])
@@ -118,9 +38,6 @@ def generate_report(request: Request):
         user_id = request.user.payload.get("email")
 
     file_format = data.get("file_format", "pdf")
-
-    # Todos los formatos (pdf, word, csv, pptx) se procesan en generate_report_task.
-    # La integración PPTX de Fernando está marcada como bloque comentado en tasks.py.
 
     report = Report.objects.create(
         context=context,
