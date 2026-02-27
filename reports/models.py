@@ -9,6 +9,7 @@ class Report(models.Model):
         ("descriptive", "Descriptivo"),
         ("summary", "Resumen"),
         ("evaluation", "Evaluación"),
+        ("presentation", "Presentación"),
     ]
     OUTPUT_FORMAT_CHOICES = [
         ("markdown", "Markdown"),

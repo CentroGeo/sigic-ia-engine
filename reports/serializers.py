@@ -16,7 +16,7 @@ class ReportCreateSerializer(serializers.Serializer):
     )
     report_name = serializers.CharField(max_length=255)
     report_type = serializers.ChoiceField(
-        choices=["institutional", "descriptive", "summary", "evaluation"],
+        choices=["institutional", "descriptive", "summary", "evaluation", "presentation"],
     )
     output_format = serializers.ChoiceField(
         choices=["markdown", "plain_text"],
