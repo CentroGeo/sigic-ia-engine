@@ -31,6 +31,8 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+from .location_extractor import extract_locations_from_context
+
 llm_lock: threading.Lock = threading.Lock()
 ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:11434')
 
@@ -798,8 +800,47 @@ def get_chat_histories(request):
 
         serializer = HistoryMiniSerializer(histories, many=True)
         return Response(serializer.data)
-    
+
     except Exception as e:
+        return JsonResponse({"error": str(e)}, status=500)
+
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "locations": {"type": "array", "items": {"type": "string"}},
+            },
+        }
+    },
+    summary="Obtener ubicaciones del contexto (POST)",
+    description="Extrae y lista países, estados y municipios mencionados en el contexto.",
+    tags=["Chat"],
+)
+@api_view(["POST"])
+def get_context_locations(request):
+    """
+    Endpoint para extraer ubicaciones de un contexto específico.
+    """
+    try:
+        context_id = request.data.get('context_id')
+        if not context_id:
+            return JsonResponse({"error": "Se requiere context_id"}, status=400)
+
+        # Verificar si el contexto existe
+        try:
+            Context.objects.get(id=context_id)
+        except Context.DoesNotExist:
+            return JsonResponse({"error": "Contexto no encontrado"}, status=404)
+
+        # Llamar a la lógica de extracción
+        locations = extract_locations_from_context(context_id)
+        
+        return JsonResponse({"locations": locations}, status=200)
+
+    except Exception as e:
+        logger.error(f"Error en get_context_locations: {str(e)}")
         return JsonResponse({"error": str(e)}, status=500)
 
 @extend_schema(

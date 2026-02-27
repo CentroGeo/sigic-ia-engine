@@ -9,4 +9,5 @@ urlpatterns = [
     
     path('history/title', views.historyTitle, name='history-title'),
     path('history/remove/<int:chat_id>', views.historyRemove, name='history-remove'),
+    path('context/locations', views.get_context_locations, name='context-locations'),
 ]

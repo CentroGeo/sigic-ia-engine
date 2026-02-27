@@ -24,7 +24,7 @@ urlpatterns = [
     path('admin/', admin.site.urls),
     path('api/fileuploads/', include('fileuploads.urls')),
     path('api/chat/', include('chat.urls')),
-    
+    path('api/localidades/', include('localidades.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     # Optional UI:
     path('api/schema/swagger-ui/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),

@@ -42,6 +42,7 @@ INSTALLED_APPS = [
     'fileuploads',
     'chat',
     'reports',
+    'localidades',
     'rest_framework',
     'drf_spectacular'
 ]
