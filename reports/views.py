@@ -19,12 +19,14 @@ from reports.renderers.pptx_renderer import render_pptx_from_spec
 from reports.models import Report
 from fileuploads.models import Context, Files
 from shared.authentication import KeycloakAuthentication
+from django.core.files.uploadedfile import SimpleUploadedFile
+from fileuploads.utils import upload_image_to_geonode
+
 
 
 # ---------------------------------------------------------------------------
 # Vista existente (PPTX)
 # ---------------------------------------------------------------------------
-
 @api_view(["POST"])
 def generate_pptx_report(request):
     ser = PptxReportRequestSerializer(data=request.data)
@@ -41,29 +43,53 @@ def generate_pptx_report(request):
 
     pptx_bytes = render_pptx_from_spec(spec)
 
-    # nombre del file
-    base_name = data["report_name"] or "report"
-    # quitar .pptx si viene incluido
+    # nombrado  del file
+    base_name = data.get("report_name") or "report"
     if base_name.lower().endswith(".pptx"):
         base_name = base_name[:-5]
     base_name = slugify(base_name)[:60] or "report"
     filename = f"{base_name}-{get_random_string(8)}.pptx"
 
-    # guardado en MEDIA_ROOT/reports/
-    rel_path = os.path.join("reports", filename)
-    abs_path = os.path.join(settings.MEDIA_ROOT, rel_path)
-    os.makedirs(os.path.dirname(abs_path), exist_ok=True)
+    #  aquí se crea un archivo compatible con la función  upload_image_to_geonode
+    pptx_uploaded = SimpleUploadedFile(
+        name=filename,
+        content=pptx_bytes,
+        content_type="application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    )
 
-    with open(abs_path, "wb") as f:
-        f.write(pptx_bytes)
+    token = request.headers.get("Authorization")
+    if not token:
+        return JsonResponse({"error": "Missing Authorization header"}, status=401)
 
-    # construcción de la URL absoluta
-    download_url = request.build_absolute_uri(settings.MEDIA_URL + rel_path.replace("\\", "/"))
+    # se realiza la carga a geonode
+    resp = upload_image_to_geonode(pptx_uploaded, filename=filename, token=token)
+
+    # print("=== GEONODE UPLOAD STATUS ===", resp.status_code)
+    # print("=== GEONODE UPLOAD TEXT ===", resp.text[:800])
+
+    try:
+        payload = resp.json()
+    except Exception:
+        payload = {"raw": resp.text}
+
+    if resp.status_code >= 400:
+        return JsonResponse(
+            {"error": "upload_failed", "upstream_status": resp.status_code, "upstream": payload},
+            status=502,
+        )
+
+    #  construcción de la URL final
+    geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+    url = payload.get("url") or payload.get("download_url") or ""
+
+    if url.startswith("/"):
+        url = geonode_base + url
 
     return JsonResponse(
         {
-            "download_url": download_url,
+            "download_url": url,
             "filename": filename,
+            "geonode_raw": payload,  # opcional, luego  se puede quitar
         }
     )
 
