@@ -5,7 +5,7 @@ from docx import Document
 from docx.shared import Pt
 
 
-def render_docx(content: str, output_format: str) -> bytes:
+def render_docx(content: str, output_format: str, use_letterhead: bool = False) -> bytes:
     """
     Convierte *content* a bytes DOCX.
 
@@ -13,11 +13,23 @@ def render_docx(content: str, output_format: str) -> bytes:
     ----------
     content       : texto generado por el LLM
     output_format : 'markdown' | 'plain_text'
+    use_letterhead: booleano para aplicar formato SECIHTI
     """
     # Limpiar siempre: quitar code fences que el LLM a veces agrega
     content = _strip_code_fences(content)
 
-    doc = Document()
+    doc = None
+    if use_letterhead:
+        import os
+        from django.conf import settings
+        template_path = os.path.join(settings.BASE_DIR, "reports", "templates", "plantilla_secihti.docx")
+        if os.path.exists(template_path):
+            doc = Document(template_path)
+        else:
+            print(f"[REPORT] ADVERTENCIA: Plantilla {template_path} no encontrada.")
+            doc = Document()
+    else:
+        doc = Document()
 
     # Siempre parsear como markdown: el LLM suele generar markdown incluso
     # cuando se solicita plain_text. El parser lo maneja en ambos casos.
@@ -74,15 +86,18 @@ def _parse_markdown_to_docx(doc: Document, content: str) -> None:
             _flush_table(doc, table_rows)
             table_rows = []
             in_table = False
-            p = doc.add_paragraph(line[2:].strip(), style="List Bullet")
+            # Fallback a un bullet manual en vez de requerir el estilo "List Bullet"
+            doc.add_paragraph(f"• {line[2:].strip()}")
 
         # Numbered list
         elif re.match(r"^\d+\. ", line):
             _flush_table(doc, table_rows)
             table_rows = []
             in_table = False
-            text = re.sub(r"^\d+\. ", "", line).strip()
-            doc.add_paragraph(text, style="List Number")
+            # Fallback a un bullet manual en vez de requerir el estilo "List Number" 
+            # (que falla si la plantilla base no lo incluye)
+            text = line.strip()
+            doc.add_paragraph(text)
 
         # Empty line — flush pending table if any
         elif line.strip() == "":
