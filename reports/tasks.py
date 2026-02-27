@@ -1,5 +1,6 @@
 import io
 import os
+import requests
 from datetime import datetime
 
 from celery import shared_task
@@ -32,6 +33,8 @@ def _upload_to_geonode(
     Authorization: Bearer <jwt>). GeoNode valida el JWT en /documents/upload.
     Un token de API de solo lectura (GeoNode REST API key) NO es suficiente.
     """
+
+    print("#########_upload_to_geonode#############", flush=True)
     if not authorization:
         return None
 
@@ -80,6 +83,24 @@ def _upload_to_geonode(
     except Exception as exc:
         print(f"[REPORT] _upload_to_geonode exception: {exc}, fallback local")
         return None
+
+
+def upload_file_to_geonode(file, filename, token=""):
+    print("#########upload_file_to_geonode##############", flush=True)
+    file_bytes = file.read()
+    files = {"file": (filename, file_bytes, file.content_type)}
+    data = {"category": "contextos"}
+    headers = {"Authorization": token}
+
+    geonode_base_url = os.environ.get("GEONODE_SERVER")
+    upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/upload"
+
+    response = requests.post(
+        upload_url, files=files, data=data, headers=headers, timeout=30
+    )
+
+    return response
+
 
 
 # ---------------------------------------------------------------------------
@@ -142,20 +163,29 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{safe_name}_{timestamp}.pptx"
 
-            geonode_result = _upload_to_geonode(
-                pptx_bytes, filename,
-                "application/vnd.openxmlformats-officedocument.presentationml.presentation",
-                report.report_name, authorization,
-            )
-            if geonode_result:
-                report.geonode_id = geonode_result["geonode_id"]
-                report.geonode_url = geonode_result["geonode_url"]
-                download_url = geonode_result["geonode_url"]
+            # Mock a file object for the custom file upload
+            file_obj = io.BytesIO(pptx_bytes)
+            file_obj.name = filename
+            file_obj.content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
+            response = upload_file_to_geonode(file_obj, filename, token=authorization)
+            
+            print(f"[REPORT] geonode_result: {response.status_code} - {response.text}", flush=True)
+
+            if response.status_code in [200, 201]:
+                resp_json = response.json()
+                relative_url = resp_json.get("url", "")
+                
+                # The response URL is typically relative, e.g. "/uploaded/ia/uploads/..."
+                geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                report.geonode_url = geonode_base + relative_url
+                report.geonode_id = None # Fallback as ID is not extracted
+                download_url = report.geonode_url
             else:
                 rel_path = _save_local(pptx_bytes, filename, report.context_id, report_id)
                 report.file_path = rel_path
                 media_url = getattr(settings, "MEDIA_URL", "/media/")
                 download_url = base_url.rstrip("/") + media_url + rel_path
+
             report.status = "done"
             report.save(update_fields=["geonode_id", "geonode_url", "file_path", "status", "updated_date"])
             print(f"[REPORT] done (pptx) → {download_url}")
@@ -218,15 +248,25 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         filename = f"{safe_name}_{timestamp}.{ext}"
 
-        # 8. Intentar subida a GeoNode
-        geonode_result = _upload_to_geonode(
-            file_bytes, filename, content_type, report.report_name, authorization
-        )
+        # 8. Intentar subida a GeoNode usando la nueva función
+        file_obj = io.BytesIO(file_bytes)
+        file_obj.name = filename
+        file_obj.content_type = content_type
+        response = upload_file_to_geonode(file_obj, filename, token=authorization)
 
-        if geonode_result:
-            report.geonode_id = geonode_result["geonode_id"]
-            report.geonode_url = geonode_result["geonode_url"]
-            download_url = geonode_result["geonode_url"]
+        print(f"[REPORT] geonode_result HTTP {response.status_code}: {response.text}", flush=True)
+        print(filename,flush=True)
+
+        if response.status_code in [200, 201]:
+            resp_json = response.json()
+            relative_url = resp_json.get("url", "")
+            
+            # The response URL is typically relative
+            geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+            report.geonode_url = geonode_base + relative_url
+            report.geonode_id = None
+            report.file_path = filename
+            download_url = report.geonode_url
             report.status = "done"
             report.save(update_fields=["geonode_id", "geonode_url", "status", "updated_date"])
         else:
