@@ -93,6 +93,9 @@ def generate_report(request: Request):
 
     file_format = data.get("file_format", "pdf")
 
+    # Todos los formatos (pdf, word, csv, pptx) se procesan en generate_report_task.
+    # La integración PPTX de Fernando está marcada como bloque comentado en tasks.py.
+
     report = Report.objects.create(
         context=context,
         report_name=data["report_name"],
