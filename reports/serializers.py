@@ -86,6 +86,8 @@ class ReportSerializer(serializers.ModelSerializer):
             "status",
             "task_id",
             "file_path",
+            "geonode_id",
+            "geonode_url",
             "error_message",
             "created_date",
             "updated_date",
@@ -94,6 +96,8 @@ class ReportSerializer(serializers.ModelSerializer):
         read_only_fields = fields
 
     def get_download_url(self, obj):
+        if obj.geonode_url:
+            return obj.geonode_url
         if not obj.file_path:
             return None
         request = self.context.get("request")
@@ -115,11 +119,15 @@ class ReportListSerializer(serializers.ModelSerializer):
             "report_type",
             "file_format",
             "status",
+            "geonode_id",
+            "geonode_url",
             "created_date",
             "download_url",
         ]
 
     def get_download_url(self, obj):
+        if obj.geonode_url:
+            return obj.geonode_url
         if not obj.file_path:
             return None
         request = self.context.get("request")

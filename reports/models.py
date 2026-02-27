@@ -18,6 +18,7 @@ class Report(models.Model):
         ("pdf", "PDF"),
         ("word", "Word (.docx)"),
         ("csv", "CSV"),
+        ("pptx", "PowerPoint (.pptx)"),
     ]
     STATUS_CHOICES = [
         ("pending", "Pendiente"),
@@ -41,6 +42,8 @@ class Report(models.Model):
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     task_id = models.CharField(max_length=255, null=True, blank=True)
     file_path = models.CharField(max_length=512, null=True, blank=True)
+    geonode_id = models.IntegerField(null=True, blank=True)
+    geonode_url = models.URLField(max_length=512, null=True, blank=True)
     error_message = models.TextField(null=True, blank=True)
 
     created_date = models.DateTimeField(auto_now_add=True)
