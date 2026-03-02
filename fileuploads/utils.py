@@ -41,9 +41,10 @@ BATCH_SIZE = 150
 model = SentenceTransformer("all-MiniLM-L6-v2")
 
 
-def convert_to_uploadedfile(filepath):
-    filename = os.path.basename(filepath)
-
+def convert_to_uploadedfile(filepath, file_name=None):
+    #filename = os.path.basename(filepath)
+    filename = file_name
+    
     # Detectar content_type
     content_type, _ = mimetypes.guess_type(filepath)
     if content_type is None:
@@ -772,6 +773,8 @@ def process_files_catalog(request, workspace, user_id):
         for file in archivos_geonode:
             register = json.loads(file)
             id_document = register["id"]
+            file_name = register["nombre"]
+            
             try:
                 # url = "https://geonode.dev.geoint.mx/documents/{register}/download".format(register=id_document)
                 # url = "https://geonode.dev.geoint.mx/datasets/{register}/download".format(register=id_document)
@@ -796,7 +799,7 @@ def process_files_catalog(request, workspace, user_id):
                             for root, dirs, files in os.walk(tmpdir):
                                 for file in files:
                                     filepath = os.path.join(root, file)
-                                    uploaded_file = convert_to_uploadedfile(filepath)
+                                    uploaded_file = convert_to_uploadedfile(filepath, file_name)
                                     filename = uploaded_file.name
 
                                     # Guardar info en la base de datos
@@ -880,12 +883,12 @@ def process_files_catalog(request, workspace, user_id):
                                         }
                                     )
                     else:
-                        filename = None
-                        content_disp = response.headers.get("Content-Disposition", "")
-                        if content_disp:
-                            match = re.findall('filename="?([^"]+)"?', content_disp)
-                            if match:
-                                filename = match[0]
+                        filename = file_name
+                        # content_disp = response.headers.get("Content-Disposition", "")
+                        # if content_disp:
+                        #     match = re.findall('filename="?([^"]+)"?', content_disp)
+                        #     if match:
+                        #         filename = match[0]
 
                         print("csv!!", filename, flush=True)
                         file_path = os.path.join(tmpdir, filename)
