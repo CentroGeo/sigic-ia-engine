@@ -31,8 +31,10 @@ def search_in_json_files(context, query, reasoning_model, server_url) -> List[Li
                 {"role": "user", "content": query},
             ],
             "stream": False,
-            "temperature": 0,
-            "think": False
+            "format": "json",
+            "options": {
+                "temperature": 0
+            }
         }
         
         resp = requests.post(
@@ -42,13 +44,16 @@ def search_in_json_files(context, query, reasoning_model, server_url) -> List[Li
         data = resp.json()
         search_terms_str = data["message"]["content"]
         logger.debug(f"Semantico!!!: {search_terms_str}")
-        
+        print(f"Semantico!!!: {search_terms_str}", flush=True)
         try:
             search_terms = json.loads(search_terms_str)
         except json.JSONDecodeError:
             logger.error("Error decoding semantic search terms JSON")
             return []
-            
+        
+        if not search_terms.get("should_search", False):
+            return []
+
         # 2. Key/Structure Search
         if search_terms.get("has_terms") or search_terms.get("has_quantity") or search_terms.get("has_range"):
             
@@ -151,6 +156,9 @@ def search_in_json_files(context, query, reasoning_model, server_url) -> List[Li
                     resp.raise_for_status()
                     data = resp.json()
                     sql = data["message"]["content"]
+                    
+                    with open("llm_context_data.txt", "w", encoding="utf-8") as f:
+                        f.write(llm_context_data)
                     
                     try:    
                         with connection.cursor() as cursor:
