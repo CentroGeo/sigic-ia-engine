@@ -8,6 +8,12 @@ RUN apt-get update && apt-get install -y \
     git \
     curl \
     netcat-openbsd \
+    libglib2.0-0 \
+    libpango-1.0-0 \
+    libpangocairo-1.0-0 \
+    libcairo2 \
+    libffi-dev \
+    fonts-liberation \
     && rm -rf /var/lib/apt/lists/*
 
 # Argumento de entorno de build
