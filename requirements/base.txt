@@ -44,8 +44,8 @@ ijson
 celery==5.3.4
 redis==5.0.1
 django-celery-results
-
 # Generación de reportes
 weasyprint
 Markdown
 python-pptx
+geopandas
