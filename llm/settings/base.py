@@ -43,6 +43,7 @@ INSTALLED_APPS = [
     'chat',
     'geospatial',
     'reports',
+    'localidades',
     'rest_framework',
     'drf_spectacular'
 ]
