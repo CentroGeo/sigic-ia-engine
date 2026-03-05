@@ -21,6 +21,17 @@ from django.db import connection
 from django.conf import settings
 import os
 import logging
+from .geospatial_utils import (
+        load_geojson_to_gdf,
+        validate_plan,
+        execute_geospatial_plan,
+        gdf_to_geojson_dict,
+        save_geojson_file,
+        get_geometry_type
+    )
+from .prompt_geospacial import BASE_SYSTEM_PROMPT_GEOSPACIAL
+from django.http import FileResponse
+import uuid
 
 logger = logging.getLogger(__name__)
 
@@ -147,17 +158,6 @@ def geospatial_execute(request):
     Output (output_format="file"):
     - Descarga directa del archivo GeoJSON
     """
-    from .geospatial_utils import (
-        load_geojson_to_gdf,
-        validate_plan,
-        execute_geospatial_plan,
-        gdf_to_geojson_dict,
-        save_geojson_file,
-        get_geometry_type
-    )
-    from .prompt_geospacial import BASE_SYSTEM_PROMPT_GEOSPACIAL
-    from django.http import FileResponse
-    import uuid
     
     try:
         payload = request.data
@@ -299,46 +299,82 @@ Genera el plan en JSON.
         geometry_type = get_geometry_type(result_gdf)
         
         if output_format == 'geojson':
-            geojson_dict = gdf_to_geojson_dict(result_gdf)
+            geojson_data = gdf_to_geojson_dict(result_gdf)
                         
             with open("respuesta_geomtry.json", "w", encoding="utf-8") as f:
-                json.dump(geojson_dict, f, ensure_ascii=False, indent=2)
+                json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+            
+            # Guardar archivo descargable
+            import geopandas as gpd
+            import shutil
+            import uuid
+            
+            timestamp = int(time.time())
+            prefix = f"ctx_{context_id}" if context_id else f"files_{len(file_ids)}"
+            base_filename = f"localidades_{prefix}_{timestamp}"
+            geojsons_dir = os.path.join(settings.MEDIA_ROOT, "geojsons")
+            os.makedirs(geojsons_dir, exist_ok=True)
+            
+            # Validar output_format
+            output_format = str(output_format).lower()
+            if output_format not in ["geojson", "shp", "gpkg"]:
+                output_format = "geojson"
                 
+            file_url = ""
+            
+            if output_format == "geojson":
+                filename = f"{base_filename}.geojson"
+                file_path = os.path.join(geojsons_dir, filename)
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(geojson_data, f, ensure_ascii=False, indent=2)
+                file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+                
+            else:
+                # Requerimos geopandas para shp y gpkg
+                # Convertimos el FeatureCollection dict a GeoDataFrame
+                if geojson_data:
+                    gdf = gpd.GeoDataFrame.from_features(geojson_data["features"])
+                    # Forzar CRS WGS84 ya que las coordenadas LLM vienen como lon, lat standard
+                    gdf.set_crs(epsg=4326, inplace=True)
+                else:
+                    # Si está vacío creamos uno en blanco con columnas básicas para evitar fallos
+                    import pandas as pd
+                    from shapely.geometry import Point
+                    gdf = gpd.GeoDataFrame(pd.DataFrame(columns=["name", "type", "context", "país", "estado"]), geometry=[], crs="EPSG:4326")
+                
+                if output_format == "gpkg":
+                    filename = f"{base_filename}.gpkg"
+                    file_path = os.path.join(geojsons_dir, filename)
+                    gdf.to_file(file_path, driver="GPKG", layer="localidades")
+                    file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+                    
+                elif output_format == "shp":
+                    # Un shapefile son varios archivos, así que creamos un temporal, guardamos y comprimimos en zip
+                    temp_shp_dir = os.path.join(geojsons_dir, f"shp_{base_filename}")
+                    os.makedirs(temp_shp_dir, exist_ok=True)
+                    
+                    shp_path = os.path.join(temp_shp_dir, f"{base_filename}.shp")
+                    gdf.to_file(shp_path, driver="ESRI Shapefile")
+                    
+                    zip_filename = f"{base_filename}.zip"
+                    zip_path = os.path.join(geojsons_dir, zip_filename)
+                    
+                    # Crear el zip de todo el directorio
+                    shutil.make_archive(zip_path.replace('.zip', ''), 'zip', temp_shp_dir)
+                    
+                    # Limpiar la carpeta temporal suelta
+                    shutil.rmtree(temp_shp_dir)
+                    
+                    file_url = f"{settings.MEDIA_URL}geojsons/{zip_filename}"
+
             return JsonResponse({
                 "plan": plan,
-                "geojson": geojson_dict,
+                "geojson": geojson_data,
                 "feature_count": feature_count,
-                "geometry_type": geometry_type
+                "geometry_type": geometry_type,
+                "file_url": file_url
             }, status=200)
         
-        elif output_format == 'url':
-            # Guardar archivo y retornar URL
-            filename = f"geospatial_result_{uuid.uuid4().hex[:8]}"
-            filepath = save_geojson_file(result_gdf, filename)
-            
-            # Generar URL relativa
-            relative_path = filepath.replace(settings.MEDIA_ROOT, '').lstrip('/')
-            url = f"{settings.MEDIA_URL}{relative_path}"
-            
-            return JsonResponse({
-                "plan": plan,
-                "url": url,
-                "feature_count": feature_count,
-                "geometry_type": geometry_type
-            }, status=200)
-        
-        elif output_format == 'file':
-            # Guardar archivo temporal y retornar para descarga
-            filename = f"geospatial_result_{uuid.uuid4().hex[:8]}"
-            filepath = save_geojson_file(result_gdf, filename)
-            
-            response = FileResponse(
-                open(filepath, 'rb'),
-                as_attachment=True,
-                filename=f"{filename}.geojson"
-            )
-            
-            return response
         
     except Exception as e:
         logger.error(f"Error en geospatial_execute: {str(e)}")
