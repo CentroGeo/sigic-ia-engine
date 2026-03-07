@@ -231,7 +231,7 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         print(f"[REPORT] LLM respondió {len(content)} chars")
 
         # 6. Renderizar al formato elegido
-        file_bytes = _render(content, report.file_format, report.output_format)
+        file_bytes = _render(content, report.file_format, report.output_format, use_letterhead=report.use_letterhead)
 
         # 7. Determinar extensión, filename y content-type
         ext_map = {"pdf": "pdf", "word": "docx", "csv": "csv", "txt": "txt"}
@@ -293,14 +293,14 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
 # Helpers de renderizado
 # ---------------------------------------------------------------------------
 
-def _render(content: str, file_format: str, output_format: str) -> bytes:
+def _render(content: str, file_format: str, output_format: str, use_letterhead: bool = False) -> bytes:
     if file_format == "pdf":
         from reports.renderers.pdf_renderer import render_pdf
-        return render_pdf(content, output_format)
+        return render_pdf(content, output_format, use_letterhead=use_letterhead)
 
     elif file_format == "word":
         from reports.renderers.docx_renderer import render_docx
-        return render_docx(content, output_format)
+        return render_docx(content, output_format, use_letterhead=use_letterhead)
 
     elif file_format == "csv":
         from reports.renderers.csv_renderer import render_csv
