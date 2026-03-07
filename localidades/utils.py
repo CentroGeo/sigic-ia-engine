@@ -157,7 +157,7 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson", geometry_type="point"):
+def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson", geometry_type="point", authorization=None):
     # (El cuerpo comienza con validaciones, agregamos export_format a la definicion y pasamos al final)
     """
     Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
@@ -427,6 +427,43 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                 
                 file_url = f"{settings.MEDIA_URL}geojsons/{zip_filename}"
 
+        # Opcional subida a geonode si hay authorization
+        if authorization:
+            title = f"Mapa espacializado: {base_filename}"
+            final_file_path = ""
+            content_type = ""
+            if export_format == "geojson":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.geojson")
+                content_type = "application/geo+json"
+            elif export_format == "gpkg":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.gpkg")
+                content_type = "application/geopackage+sqlite3"
+            elif export_format == "shp":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.zip")
+                content_type = "application/zip"
+                
+            try:
+                import io
+                from fileuploads.utils import upload_image_to_geonode
+                
+                with open(final_file_path, "rb") as f:
+                    file_bytes = f.read()
+                    
+                file_obj = io.BytesIO(file_bytes)
+                file_obj.name = os.path.basename(final_file_path)
+                file_obj.content_type = content_type
+                
+                response = upload_image_to_geonode(file_obj, os.path.basename(final_file_path), token=authorization)
+                if response and response.status_code < 400:
+                    response_data = response.json()
+                    relative_url = response_data.get("url", "")
+                    if relative_url:
+                        geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                        file_url = f"{geonode_base}{relative_url}"
+                        logger.info(f"Archivo subido a geonode correctamente: {file_url}")
+            except Exception as geo_e:
+                logger.error(f"Fallo al subir archivo a geonode: {str(geo_e)}")
+
         return {
             "entities": unique_entities,
             "geojson": geojson_data,
@@ -456,7 +493,7 @@ def process_entities_batch(text, model, system_prompt, server):
             f"{server}/api/generate",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=int(os.environ.get("OLLAMA_TIMEOUT", 600))
+            timeout=int(os.environ.get("OLLAMA_TIMEOUT", 1800))
         )
         response.raise_for_status()
         result = response.json()

@@ -61,6 +61,8 @@ def detect_localidades(request):
     export_format = data.get("export_format", "geojson")
     geometry_type = data.get("geometry_type", "point")
 
+    authorization = request.META.get("HTTP_AUTHORIZATION")
+
     if not context_id and not file_ids:
         return Response({"error": "Se requiere el parámetro 'context_id' o un arreglo de 'file_ids'"}, status=status.HTTP_400_BAD_REQUEST)
 
@@ -73,7 +75,8 @@ def detect_localidades(request):
         file_ids=file_ids, 
         entity_types=entity_types, 
         export_format=export_format,
-        geometry_type=geometry_type
+        geometry_type=geometry_type,
+        authorization=authorization
     )
     
     if "error" in result:
