@@ -85,8 +85,16 @@ def _upload_to_geonode(
         return None
 
 
-def upload_file_to_geonode(file, filename, token=""):
+def upload_file_to_geonode(file, filename, token="", refresh_token=""):
     print("#########upload_file_to_geonode##############", flush=True)
+
+    if refresh_token:
+        from shared.authentication import refresh_keycloak_token
+        new_token = refresh_keycloak_token(refresh_token)
+        if new_token:
+            token = new_token
+            print("[REPORT] Token OAuth refrescado con éxito previo a la subida", flush=True)
+
     file_bytes = file.read()
     files = {"file": (filename, file_bytes, file.content_type)}
     data = {"category": "contextos"}
@@ -128,7 +136,7 @@ def _save_local(file_bytes: bytes, filename: str, context_id: int, report_id: in
     time_limit=1800,
     soft_time_limit=1500,
 )
-def generate_report_task(self, report_id: int, base_url: str, authorization: str = "") -> dict:
+def generate_report_task(self, report_id: int, base_url: str, authorization: str = "", refresh_token: str = "") -> dict:
     """
     Tarea Celery que genera el contenido del reporte con el LLM y lo persiste.
     Intenta subir a GeoNode usando `authorization`; si falla guarda en disco local.
@@ -167,7 +175,7 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
             file_obj = io.BytesIO(pptx_bytes)
             file_obj.name = filename
             file_obj.content_type = "application/vnd.openxmlformats-officedocument.presentationml.presentation"
-            response = upload_file_to_geonode(file_obj, filename, token=authorization)
+            response = upload_file_to_geonode(file_obj, filename, token=authorization, refresh_token=refresh_token)
             
             print(f"[REPORT] geonode_result: {response.status_code} - {response.text}", flush=True)
 
@@ -252,7 +260,7 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         file_obj = io.BytesIO(file_bytes)
         file_obj.name = filename
         file_obj.content_type = content_type
-        response = upload_file_to_geonode(file_obj, filename, token=authorization)
+        response = upload_file_to_geonode(file_obj, filename, token=authorization, refresh_token=refresh_token)
 
         print(f"[REPORT] geonode_result HTTP {response.status_code}: {response.text}", flush=True)
         print(filename,flush=True)

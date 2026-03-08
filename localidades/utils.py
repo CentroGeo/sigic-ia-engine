@@ -157,7 +157,18 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson", geometry_type="point", authorization=None):
+def extract_localities_from_context(
+    context_id: int, 
+    model: str, 
+    focus: str, 
+    file_ids: list = None,
+    entity_types: list = None,
+    export_format: str = "geojson",
+    geometry_type: str = "point",  # "point", "centroid", "polygon"
+    authorization: str = "",
+    refresh_token: str = "",
+    progress_callback = None
+):
     # (El cuerpo comienza con validaciones, agregamos export_format a la definicion y pasamos al final)
     """
     Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
@@ -200,9 +211,15 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             else:
                 focus = "México"
         
-        system_prompt = get_system_prompt(focus, entity_types)
+        # Generar prompt con los tipos de entidades mapeados para que Ollama sepa buscar
+        front_map_prompt = {"paises": "país", "estados": "estado", "municipios": "municipio", "localidades": "localidad", "infraestructura": "infraestructura"}
+        mapped_entity_types_prompt = [front_map_prompt.get(str(e).lower(), str(e).lower()) for e in entity_types] if entity_types else None
+        
+        system_prompt = get_system_prompt(focus, mapped_entity_types_prompt)
         print(system_prompt,flush=True)
 
+        total_chunks_all_files = sum(DocumentEmbedding.objects.filter(file=f).count() for f in files)
+        processed_chunks_total = 0
 
         for file in files:
             chunks = DocumentEmbedding.objects.filter(file=file).order_by('chunk_index')
@@ -221,6 +238,11 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                     batch_entities = process_entities_batch(current_batch_text, model, system_prompt, server)
                     all_entities.extend(batch_entities)
                     
+                    processed_chunks_total += current_chunk_count
+                    if progress_callback and total_chunks_all_files > 0:
+                        prog = int((processed_chunks_total / total_chunks_all_files) * 80)
+                        progress_callback(prog)
+                        
                     current_batch_text = ""
                     current_chunk_count = 0
             
@@ -228,6 +250,13 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             if current_batch_text:
                 batch_entities = process_entities_batch(current_batch_text, model, system_prompt, server)
                 all_entities.extend(batch_entities)
+                processed_chunks_total += current_chunk_count
+                if progress_callback and total_chunks_all_files > 0:
+                    prog = int((processed_chunks_total / total_chunks_all_files) * 80)
+                    progress_callback(prog)
+
+        if progress_callback:
+            progress_callback(85)
 
         # Eliminar posibles duplicados y aplicar filtro estricto (blacklist)
         unique_entities = []
@@ -241,11 +270,20 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             "santuario", "templo", "fortaleza", "castillo", "monasterio", "calle", "avenida"
         ]
         
-        incluye_infra = (entity_types and "infraestructura" in entity_types)
+        incluye_infra = (entity_types and ("infraestructura" in entity_types))
         if incluye_infra:
             BLACKLIST = ["calle", "avenida"]  # Reducimos blacklist solo a vialidades si piden infraestructura
             
-        valid_requested = entity_types if entity_types else ["país", "estado", "municipio", "localidad"]
+        # Homologar mapeo del frontend al backend
+        front_map = {
+            "paises": "país",
+            "estados": "estado",
+            "municipios": "municipio",
+            "localidades": "localidad",
+            "infraestructura": "infraestructura"
+        }
+        mapped_types = [front_map.get(str(e).lower(), str(e).lower()) for e in entity_types] if entity_types else []
+        valid_requested = mapped_types if mapped_types else ["país", "estado", "municipio", "localidad"]
         
         for entity in all_entities:
             # Algunas veces Ollama podría no devolver el key
@@ -453,7 +491,7 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                 file_obj.name = os.path.basename(final_file_path)
                 file_obj.content_type = content_type
                 
-                response = upload_image_to_geonode(file_obj, os.path.basename(final_file_path), token=authorization)
+                response = upload_image_to_geonode(file_obj, os.path.basename(final_file_path), token=authorization, refresh_token=refresh_token)
                 if response and response.status_code < 400:
                     response_data = response.json()
                     relative_url = response_data.get("url", "")

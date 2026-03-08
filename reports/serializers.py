@@ -31,6 +31,7 @@ class ReportCreateSerializer(serializers.Serializer):
     text_format = serializers.DictField(required=False, allow_null=True, default=None)
     instructions = serializers.CharField(required=False, allow_blank=True, default="")
     use_letterhead = serializers.BooleanField(required=False, default=False)
+    refresh_token = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, data):
         context_id = data.get("context_id")
