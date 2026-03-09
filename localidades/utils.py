@@ -492,15 +492,29 @@ def extract_localities_from_context(
                 file_obj.content_type = content_type
                 
                 response = upload_image_to_geonode(file_obj, os.path.basename(final_file_path), token=authorization, refresh_token=refresh_token)
-                if response and response.status_code < 400:
-                    response_data = response.json()
-                    relative_url = response_data.get("url", "")
-                    if relative_url:
-                        geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
-                        file_url = f"{geonode_base}{relative_url}"
-                        logger.info(f"Archivo subido a geonode correctamente: {file_url}")
+                if response is not None:
+                    print(f"[LOCALIDADES-DEBUG] GeoNode Upload HTTP Status: {response.status_code}", flush=True)
+                    if response.status_code < 400:
+                        try:
+                            response_data = response.json()
+                            print(f"[LOCALIDADES-DEBUG] GeoNode Upload JSON: {response_data}", flush=True)
+                            relative_url = response_data.get("url", "")
+                            if relative_url:
+                                geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                                file_url = f"{geonode_base}{relative_url}"
+                                print(f"[LOCALIDADES-DEBUG] Archivo subido a geonode correctamente: {file_url}", flush=True)
+                            else:
+                                print("[LOCALIDADES-DEBUG] Respuesta exitosa pero NO contiene clave 'url'", flush=True)
+                        except Exception as json_exc:
+                            print(f"[LOCALIDADES-DEBUG] Error decodificando JSON de GeoNode. Content: {response.text[:200]}...", flush=True)
+                    else:
+                        print(f"[LOCALIDADES-DEBUG] Fallo al subir archivo a geonode HTTP {response.status_code}: {response.text[:200]}", flush=True)
+                else:
+                    print(f"[LOCALIDADES-DEBUG] Fallo crítico: response was None", flush=True)
             except Exception as geo_e:
-                logger.error(f"Fallo al subir archivo a geonode: {str(geo_e)}")
+                import traceback
+                traceback.print_exc()
+                print(f"[LOCALIDADES-DEBUG] Excepción subiendo archivo a geonode: {str(geo_e)}", flush=True)
 
         return {
             "entities": unique_entities,

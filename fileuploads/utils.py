@@ -529,7 +529,7 @@ def upload_image_to_geonode(file, filename, token="", refresh_token=""):
     upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/upload"
 
     response = requests.post(
-        upload_url, files=files, data=data, headers=headers, timeout=30
+        upload_url, files=files, data=data, headers=headers, timeout=180
     )
 
     return response
