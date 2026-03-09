@@ -160,6 +160,7 @@ def geospatial_execute(request):
     """
     
     try:
+        ##Payload
         payload = request.data
         context_id = payload.get('context_id')
         selected_layers = payload.get('selected_layers')
@@ -167,6 +168,7 @@ def geospatial_execute(request):
         model = payload.get('model')
         output_format = payload.get('output_format', 'geojson')
         
+        #validaciones de payload y context
         if not context_id:
             return JsonResponse({"error": "Se requiere context_id"}, status=400)
         if not prompt:
@@ -176,20 +178,22 @@ def geospatial_execute(request):
         if output_format not in ['geojson', 'url', 'file']:
             return JsonResponse({"error": "output_format debe ser 'geojson', 'url' o 'file'"}, status=400)
         
+        #se obtiene el contexto
         try:
             context = Context.objects.get(id=context_id)
         except Context.DoesNotExist:
             return JsonResponse({"error": f"Contexto {context_id} no encontrado"}, status=404)
         
-        # se obtiene las capas
+        # se obtiene las capas del contexto
         available_layers = DocumentEmbedding.discover_geojson_layers(context_id)
         
         if not available_layers:
             return JsonResponse({"error": "No se encontraron capas GeoJSON en el contexto"}, status=404)
         
-        print(f"available_layers: {available_layers}", flush=True)
         
-        # Seleccionador de capas
+        #print(f"available_layers: {available_layers}", flush=True)
+        
+        # filtro de capas seleccionadas
         if selected_layers == "all":
             file_ids = [layer['file_id'] for layer in available_layers]
         elif isinstance(selected_layers, list):
@@ -249,7 +253,7 @@ Genera el plan en JSON.
             f.write(llm_prompt)
             f.write(plan_str)
         
-        # Parsear plan robustamente (manejando bloques <think> y texto extra)
+        # manejo de bloques <think> y texto extra
         try:
             # 1. limpieza de bloques <think> si existen
             import re
@@ -268,9 +272,42 @@ Genera el plan en JSON.
             return JsonResponse({"error": f"Plan generado no es JSON válido: {str(e)}"}, status=500)
         
         logger.info(f"Plan generado: {json.dumps(plan, indent=2)}")
-        
+        with open("plan_layers.txt", "w", encoding="utf-8") as f:
+            f.write(json.dumps(plan, indent=2))
+            
         # planificación del plan
-        is_valid, error_msg = validate_plan(plan, layers_dict)
+        # Antes de validar, identificamos qué capas se están usando realmente en el plan
+        # Esto permite cargar automáticamente capas mencionadas por nombre o IDs fuera de la selección inicial
+        plan_input_ids = set()
+        step_outputs = set()
+        for step in plan.get('steps', []):
+            outputs = step.get('output_name')
+            if outputs:
+                step_outputs.add(outputs)
+            
+            for input_layer in step.get('input_layers', []):
+                # Si no es un resultado de un paso previo, es una capa inicial
+                if input_layer not in step_outputs:
+                    # Si es ID numérico
+                    if isinstance(input_layer, int):
+                        plan_input_ids.add(input_layer)
+                    # Si es nombre de archivo (string)
+                    elif isinstance(input_layer, str):
+                        # Buscar el ID correspondiente al nombre de archivo en las capas disponibles
+                        for avail in available_layers:
+                            if avail['filename'] == input_layer:
+                                plan_input_ids.add(avail['file_id'])
+                                break
+        
+        # Combinamos las capas seleccionadas inicialmente con las que el plan realmente necesita
+        final_file_ids = list(set(file_ids) | plan_input_ids)
+        
+        # Actualizamos layers_dict para la validación con todas las capas disponibles en el contexto
+        # que están siendo referenciadas en el plan
+        all_context_layers_dict = {l['file_id']: l for l in available_layers}
+        validation_dict = {fid: all_context_layers_dict[fid] for fid in final_file_ids if fid in all_context_layers_dict}
+        
+        is_valid, error_msg = validate_plan(plan, validation_dict)
         if not is_valid:
             logger.error(f"Plan inválido: {error_msg}")
             return JsonResponse({"error": f"Plan inválido: {error_msg}", "plan": plan}, status=400)
@@ -278,14 +315,17 @@ Genera el plan en JSON.
         # carga de capas
         logger.info("Cargando datos GeoJSON a GeoDataFrame...")
         initial_gdfs = {}
-        for file_id in file_ids:
-            gdf = load_geojson_to_gdf([file_id])
-            print(f"file_id: {file_id}, gdf.shape: {gdf}", flush=True)
+        for f_id in final_file_ids:
+            gdf = load_geojson_to_gdf([f_id])
             if not gdf.empty:
-                initial_gdfs[file_id] = gdf
+                initial_gdfs[f_id] = gdf
+                # mapeo por nombre de archivo para que el motor lo encuentre si el LLM usó el string
+                if f_id in all_context_layers_dict:
+                    fname = all_context_layers_dict[f_id]['filename']
+                    initial_gdfs[fname] = gdf
         
         if not initial_gdfs:
-            return JsonResponse({"error": "No se pudieron cargar los datos GeoJSON"}, status=500)
+            return JsonResponse({"error": "No se pudieron cargar los datos GeoJSON para las capas requeridas"}, status=500)
         
         # Ejecución del plan
         logger.info("Ejecutando plan geoespacial...")

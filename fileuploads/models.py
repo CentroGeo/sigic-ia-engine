@@ -141,7 +141,7 @@ class DocumentEmbedding(models.Model):
             JOIN fileuploads_context_files cf ON fi.id = cf.files_id
             WHERE cf.context_id = %s
             AND f.text_json IS NOT NULL
-            AND fi.document_type = 'application/json'
+            AND fi.document_type = 'application/geo+json'
         """
         
         layers = []

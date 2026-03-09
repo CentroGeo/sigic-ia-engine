@@ -218,6 +218,25 @@ def extract_text_from_file(file):
 
     print(f"📦 Procesando {file.name} ({file_size_mb:.2f} MB)")
 
+    # -------- GEOJSON --------
+    if ext == "geojson":
+        chunks, originals, metadata = [], [], []
+
+        try:
+            for idx, entry in enumerate(iter_json_entries(file, file_size_mb)):
+                texto, meta = json_entry_to_text_and_metadata(entry)
+                if texto:
+                    chunks.append(texto)
+                    metadata.append(meta)
+                    originals.append(entry)
+
+            print(f"🧩 GEOJSON → {len(chunks)} chunks generados")
+            return chunks, originals, metadata
+
+        except Exception as e:
+            print(f"❌ Error procesando GEOJSON: {e}")
+            return None
+        
     # -------- JSON --------
     if ext == "json":
         chunks, originals, metadata = [], [], []
