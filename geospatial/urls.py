@@ -5,4 +5,5 @@ urlpatterns = [
     # Geospatial APIs
     path('discover', views.geospatial_discover_layers, name='geospatial-discover'),
     path('execute', views.geospatial_execute, name='geospatial-execute'),
+    path('execute_async', views.geospatial_execute_async, name='geospatial-execute-async'),
 ]

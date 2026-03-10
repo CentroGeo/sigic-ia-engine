@@ -1,4 +1,4 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.response import Response
 from django.core.serializers import serialize
 from rest_framework import status
@@ -7,6 +7,8 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
+from reports.models import Report
+from shared.authentication import KeycloakAuthentication
 from fileuploads.embeddings_service import embedder
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from pgvector.django import L2Distance
@@ -163,11 +165,13 @@ def geospatial_execute(request):
         ##Payload
         payload = request.data
         context_id = payload.get('context_id')
-        selected_layers = payload.get('selected_layers')
-        prompt = payload.get('prompt')
-        model = payload.get('model')
-        output_format = payload.get('output_format', 'geojson')
+        selected_layers = payload.get('file_ids')
+        report_name = payload.get('report_name')
+        prompt = payload.get('instructions')
+        model = payload.get('model', 'deepseek-r1:32b')
+        output_format = payload.get('export_format', 'geojson')
         
+        print(f"payload: {payload}", flush=True)
         #validaciones de payload y context
         if not context_id:
             return JsonResponse({"error": "Se requiere context_id"}, status=400)
@@ -194,7 +198,7 @@ def geospatial_execute(request):
         #print(f"available_layers: {available_layers}", flush=True)
         
         # filtro de capas seleccionadas
-        if selected_layers == "all":
+        if not selected_layers:
             file_ids = [layer['file_id'] for layer in available_layers]
         elif isinstance(selected_layers, list):
             file_ids = selected_layers
@@ -214,14 +218,14 @@ def geospatial_execute(request):
         
         
         llm_prompt = f"""
-CAPAS DISPONIBLES:
-{layers_context}
+            CAPAS DISPONIBLES:
+            {layers_context}
 
-SOLICITUD DEL USUARIO:
-{prompt}
+            SOLICITUD DEL USUARIO:
+            {prompt}
 
-Genera el plan en JSON.
-"""
+            Genera el plan en JSON.
+        """
         
         server = settings.OLLAMA_API_URL
         url = f"{server}/api/chat"
@@ -351,7 +355,7 @@ Genera el plan en JSON.
             
             timestamp = int(time.time())
             prefix = f"ctx_{context_id}" if context_id else f"files_{len(file_ids)}"
-            base_filename = f"localidades_{prefix}_{timestamp}"
+            base_filename = f"{report_name}_{prefix}_{timestamp}"
             geojsons_dir = os.path.join(settings.MEDIA_ROOT, "geojsons")
             os.makedirs(geojsons_dir, exist_ok=True)
             
@@ -418,6 +422,90 @@ Genera el plan en JSON.
         
     except Exception as e:
         logger.error(f"Error en geospatial_execute: {str(e)}")
+        print(f"Error en geospatial_execute: {str(e)}", flush=True)
         import traceback
         traceback.print_exc()
+        return JsonResponse({"error": str(e)}, status=500)
+
+
+@extend_schema(
+    methods=["POST"],
+    responses={
+        202: {
+            "type": "object",
+            "properties": {
+                "report_id": {"type": "integer"},
+                "task_id": {"type": "string"},
+                "status": {"type": "string"},
+            },
+        }
+    },
+    summary="Ejecutar operaciones geoespaciales asíncronas (POST)",
+    description="Crea un Report y dispara la tarea Celery para ejecución geoespacial.",
+    tags=["Geospatial"],
+)
+@api_view(["POST"])
+@authentication_classes([KeycloakAuthentication])
+def geospatial_execute_async(request):
+    """
+    Crea un Report y dispara la tarea Celery.
+    """
+    try:
+        payload = request.data
+        context_id = payload.get('context_id')
+        selected_layers = payload.get('file_ids')
+        report_name = payload.get('report_name', 'Reporte Geoespacial')
+        prompt = payload.get('instructions')
+        model = payload.get('model', 'deepseek-r1:32b')
+        output_format = payload.get('export_format', 'geojson')
+        
+        print(f"{payload}", flush=True)
+        if not context_id or not prompt:
+            return JsonResponse({"error": "context_id e instructions son requeridos"}, status=400)
+
+        context = Context.objects.get(id=context_id)
+        
+        # Obtener user_id desde el token JWT
+        user_id = None
+        if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+            user_id = request.user.payload.get("email")
+
+        # Crear el objeto Report
+        report = Report.objects.create(
+            context=context,
+            report_name=report_name,
+            report_type="geospatial", # Tipo fijo para este flujo
+            file_format=output_format, # Usamos export_format aquí
+            instructions=prompt,
+            user_id=user_id,
+            status="pending",
+        )
+
+        # Asociar archivos si se proporcionaron
+        if selected_layers and isinstance(selected_layers, list):
+            files = Files.objects.filter(id__in=selected_layers)
+            report.files_used.set(files)
+
+        # Disparar tarea Celery
+        from geospatial.tasks import generate_operational
+        base_url = request.build_absolute_uri("/").rstrip("/")
+        authorization = request.headers.get("Authorization", "")
+        task = generate_operational.delay(report.id, base_url, authorization)
+
+        report.task_id = task.id
+        report.save(update_fields=["task_id", "updated_date"])
+
+        return Response(
+            {
+                "report_id": report.id,
+                "task_id": task.id,
+                "status": report.status,
+            },
+            status=status.HTTP_202_ACCEPTED,
+        )
+
+    except Context.DoesNotExist:
+        return JsonResponse({"error": f"Contexto {context_id} no encontrado"}, status=404)
+    except Exception as e:
+        logger.error(f"Error en geospatial_execute_async: {str(e)}")
         return JsonResponse({"error": str(e)}, status=500)
