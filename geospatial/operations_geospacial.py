@@ -166,6 +166,13 @@ OPERATIONS = {
         "max_layers": 1,
         "requires_geom": ["ANY"],
         "label": "Actualizar atributos de la capa (alias)"
+    },
+    "clustering": {
+        "min_layers": 1,
+        "max_layers": 1,
+        "requires_geom": ["POINT"],
+        "needs_distance": False,
+        "label": "Clustering Espacial (DBSCAN)"
     }
 }
 

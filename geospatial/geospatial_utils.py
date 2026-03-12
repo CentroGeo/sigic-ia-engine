@@ -242,12 +242,7 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
             if gdf.crs is None:
                 gdf.set_crs('EPSG:4326', inplace=True)
             
-            # Estimamos el UTM zone basado en el centroide promedio
-            avg_lon = gdf.geometry.centroid.x.mean()
-            utm_zone = int((avg_lon + 180) / 6) + 1
-            utm_crs = f"+proj=utm +zone={utm_zone} +ellps=WGS84 +datum=WGS84 +units=m +no_defs"
-            
-            result_gdf = gdf.to_crs(utm_crs)
+            result_gdf = gdf.to_crs(gdf.estimate_utm_crs())
             result_gdf.geometry = result_gdf.buffer(distance)
             return result_gdf.to_crs(original_crs)
         
@@ -508,6 +503,39 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
                 gdf[key] = val
             return gdf
 
+        elif op_norm == 'clustering':
+            from sklearn.cluster import DBSCAN
+            import numpy as np
+            
+            gdf = gdfs[0].copy()
+            if gdf.empty:
+                return gdf
+
+            # Proyecta a UTM para usar metros reales en la distancia (eps)
+            if gdf.crs is None:
+                gdf.set_crs('EPSG:4326', inplace=True)
+                
+            # Convierte a UTM (metros)
+            utm_crs = gdf.estimate_utm_crs()
+            gdf_utm = gdf.to_crs(utm_crs)
+            
+            # Extrae coordenadas
+            coords = np.column_stack((gdf_utm.geometry.x, gdf_utm.geometry.y))
+
+            # Parámetros del clustering
+            eps = params.get('distance', 500)      # distancia en metros
+            min_samples = params.get('min_samples', 5)
+
+            # Ejecuta DBSCAN
+            db = DBSCAN(eps=eps, min_samples=min_samples)
+            labels = db.fit_predict(coords)
+
+            # Guardar resultado
+            gdf['cluster_id'] = labels
+            
+            return gdf
+
+        
         else:
             raise ValueError(f"Operación '{operation}' no implementada")
         

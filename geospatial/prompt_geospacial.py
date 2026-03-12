@@ -37,17 +37,27 @@ Debes devolver ÚNICAMENTE un objeto JSON con esta estructura EXACTA:
 OPERACIONES DISPONIBLES
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-1. snap: (PUNTOS a LÍNEAS) Reubica puntos a la línea más cercana.
-2. buffer: (CUALQUIERA) Crea área de influencia. Requiere `distance` (metros).
-3. heatmap: (PUNTOS) Genera densidad. Requiere `property` numérica.
-4. filter: (CUALQUIERA) Filtra por atributo. Requiere `property`, `operator` (==, !=, >, <, =, in) y `value`.
-5. filter_by_bbox: (CUALQUIERA) Filtra por región geográfica. Requiere `bbox` ([min_lon, min_lat, max_lon, max_lat]).
-6. spatial_join: (2 CAPAS) Une atributos por posición. Requiere `predicate` (intersects, contains, within).
-7. union: (2+ CAPAS) Combina geometrías del mismo tipo.
-8. spatial_overlay_count: (2+ CAPAS POLYGON) Cruza y cuenta traslapes. Soporta `bbox` opcional.
-9. simplify: (CUALQUIERA) Reduce vértices. Requiere `tolerance`.
-10. centroid: (POLY/LINE) Obtiene puntos centrales.
-11. update_attributes: (1 CAPA) Agrega campos. Requiere `new_properties` (dict).
+1. buffer: (CUALQUIERA) Crea área de influencia. Requiere `distance` (metros).
+2. centroid: (POLY/LINE) Obtiene puntos centrales.
+3. dissolve: (POLYGON) Agrupa por atributo.
+4. simplify: (CUALQUIERA) Reduce vértices. Requiere `tolerance`.
+5. area_length: (POLYGON/LINE) Calcula área o longitud.
+6. filter: (CUALQUIERA) Filtra por atributo.
+7. filter_by_bbox: (CUALQUIERA) Filtra por región geográfica.
+8. heatmap: (PUNTOS) Genera densidad. Requiere `property` numérica.
+9. choropleth: (POLYGON) Mapa de coropletas por valor.
+10. spatial_join: (2 CAPAS) Une atributos por posición.
+11. intersection: (2 CAPAS) Intersección geométrica.
+12. union: (2+ CAPAS) Combina geometrías del mismo tipo.
+13. difference: (2 CAPAS) Resta geometría.
+14. spatial_overlay_count: (2+ CAPAS POLYGON) Cruza y cuenta traslapes.
+15. snap: (PUNTOS a LÍNEAS) Reubica puntos a la línea más cercana.
+16. update_attributes: (1 CAPA) Agrega campos.
+17. clustering: (PUNTOS) Identifica Hotspots/Agrupamientos. Agrega `cluster_id`.
+
+🔵 OPERACIONES DE 1 CAPA:
+
+1. buffer
    - Requiere: 1 capa
    - Parámetro obligatorio: distance (metros)
    - Geometrías: ANY
@@ -90,8 +100,8 @@ OPERACIONES DISPONIBLES
 
 8. heatmap
    - Requiere: 1 capa (preferiblemente de puntos)
-   - Parámetro obligatorio: property (nombre de la columna numérica para densidades)
-   - Uso: Generar mapas de calor basados en la intensidad de un valor.
+   - Parámetro obligatorio: property (nombre de la columna numérica)
+   - Uso: VISUALIZACIÓN de densidades. NO genera datos nuevos (devuelve la capa igual).
    - Ejemplo: {"operation": "heatmap", "input_layers": [1], "parameters": {"property": "poblacion"}}
 
 9. choropleth
@@ -141,6 +151,12 @@ OPERACIONES DISPONIBLES
     - Uso: Agrega o actualiza atributos estáticos a todos los elementos de una capa.
     - Ejemplo: {{"operation": "update_attributes", "input_layers": [1], "parameters": {{"new_properties": {{"procesado": true}}}}}}
 
+17. clustering
+    - Requiere: 1 capa de puntos.
+    - Parámetro recomendado: distance (radio en metros para agrupar, default 500).
+    - Uso: Para encontrar "zonas calientes" (Hotspots) o agrupamientos de eventos.
+    - Ejemplo: {{"operation": "clustering", "input_layers": [1], "parameters": {{"distance": 300}}}}
+
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLAS CRÍTICAS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
@@ -162,6 +178,7 @@ REGLAS CRÍTICAS
 9. NO expliques el plan. NO uses markdown. SOLO devuelve el JSON técnico con `steps`.
 10. SIEMPRE usa `snap` para "reubicar". NUNCA uses `spatial_join` para este propósito.
 11. FALLBACK REGIONAL: Si el usuario menciona una región y NO hay atributo de región, USA `filter_by_bbox`.
+12. REGLA DE HOTSPOTS (CRÍTICA): Si el usuario pide "hotspots", "agrupamientos" o "áreas de concentración", usa SIEMPRE la operación `clustering`. Genera un atributo `cluster_id` que es indispensable para el análisis.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EJEMPLOS TÉCNICOS
