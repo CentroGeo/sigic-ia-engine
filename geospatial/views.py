@@ -454,12 +454,15 @@ def geospatial_execute_async(request):
         payload = request.data
         context_id = payload.get('context_id')
         selected_layers = payload.get('file_ids')
+        operation = payload.get('operation')
         report_name = payload.get('report_name', 'Reporte Geoespacial')
         prompt = payload.get('instructions')
         model = payload.get('model', 'deepseek-r1:32b')
         output_format = payload.get('export_format', 'geojson')
         
-        print(f"{payload}", flush=True)
+        prompt = f"Operación: {operation}, instrucciones adicionales: {prompt})"
+        
+        print(f"DATA!!!!!!{payload}", flush=True)
         if not context_id or not prompt:
             return JsonResponse({"error": "context_id e instructions son requeridos"}, status=400)
 

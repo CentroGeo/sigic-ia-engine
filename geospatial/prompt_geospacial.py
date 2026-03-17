@@ -54,6 +54,7 @@ OPERACIONES DISPONIBLES
 15. snap: (PUNTOS a LÍNEAS) Reubica puntos a la línea más cercana.
 16. update_attributes: (1 CAPA) Agrega campos.
 17. clustering: (PUNTOS) Identifica Hotspots/Agrupamientos. Agrega `cluster_id`.
+18. spatial_correlation: (2 CAPAS PUNTOS) Analiza co-ocurrencia espacial.
 
 🔵 OPERACIONES DE 1 CAPA:
 
@@ -157,6 +158,12 @@ OPERACIONES DISPONIBLES
     - Uso: Para encontrar "zonas calientes" (Hotspots) o agrupamientos de eventos.
     - Ejemplo: {{"operation": "clustering", "input_layers": [1], "parameters": {{"distance": 300}}}}
 
+18. spatial_correlation
+    - Requiere: 2 capas.
+    - Parámetro recomendado: distance (radio de proximidad en metros).
+    - Uso: Analizar si eventos de tipo A ocurren cerca de eventos de tipo B, o si eventos ocurren dentro de "zonas" específicas (ej: delitos en zonas de peligro, accidentes en zonas conflictivas).
+    - Ejemplo: {{"operation": "spatial_correlation", "input_layers": [1, 2], "parameters": {{"distance": 100}}}}
+    
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLAS CRÍTICAS
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━

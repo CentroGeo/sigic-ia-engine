@@ -535,7 +535,61 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
             
             return gdf
 
-        
+        elif op_norm == 'spatialcorrelation':
+            # Análisis de co-ocurrencia espacial entre dos capas
+            if len(gdfs) < 2:
+                raise ValueError("La operación 'spatial_correlation' requiere 2 capas")
+            
+            layer1 = gdfs[0].copy()
+            layer2 = gdfs[1].copy()
+            
+            dist = params.get('distance', 500)
+            
+            # 1. Asegurar CRS
+            if layer1.crs is None:
+                layer1 = layer1.set_crs("EPSG:4326")
+            if layer2.crs is None:
+                layer2 = layer2.set_crs("EPSG:4326")
+
+            # 2. Guardar CRS original para el retorno
+            original_crs = layer1.crs
+
+            # 3. Proyectar ambas capas a UTM para trabajar en metros si es necesario
+            utm_crs = layer1.estimate_utm_crs()
+            layer1_utm = layer1.to_crs(utm_crs)
+            layer2_utm = layer2.to_crs(utm_crs)
+
+            # 4. Preparar fuente de correlación (layer1)
+            # Si es Punto, creamos buffer. Si es Polígono, usamos la geometría directamente 
+            # (o agregamos el buffer de buffer si se desea extender el área)
+            if all(layer1_utm.geometry.type == 'Point') or all(layer1_utm.geometry.type == 'MultiPoint'):
+                layer1_source = layer1_utm.copy()
+                layer1_source.geometry = layer1_source.buffer(dist)
+            else:
+                # Para polígonos, usamos el área misma. Si dist > 0, expandimos.
+                layer1_source = layer1_utm.copy()
+                if dist > 0:
+                    layer1_source.geometry = layer1_source.buffer(dist)
+
+            # 5. Join espacial: objetos de layer2 dentro de la influencia de layer1
+            # Importante: sjoin devuelve un GeoDataFrame con la geometría de la IZQUIERDA (layer2)
+            correlation = gpd.sjoin(
+                layer2_utm,
+                layer1_source,
+                how="inner",
+                predicate="intersects"
+            )
+            
+            # Volver al CRS original
+            correlation = correlation.to_crs(original_crs)
+            
+            # Limpiar columnas de sistema que podrían causar problemas en exportaciones sucesivas
+            if 'index_right' in correlation.columns:
+                correlation = correlation.drop(columns=['index_right'])
+
+            # NOTA: En lugar de devolver un .groupby().size() (que es un DataFrame normal y rompe el flujo GIS),
+            # devolvemos el GeoDataFrame de los puntos/objetos que están correlacionados.
+            return correlation
         else:
             raise ValueError(f"Operación '{operation}' no implementada")
         
