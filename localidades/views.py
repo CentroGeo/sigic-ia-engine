@@ -1,82 +1,113 @@
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.response import Response
 from rest_framework import status
-from .utils import extract_localities_from_context
-from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from drf_spectacular.utils import extend_schema
+from shared.authentication import KeycloakAuthentication
+from fileuploads.models import Context, Files
+from .models import Spatialization
+from .serializers import SpatializationCreateSerializer, SpatializationListSerializer, SpatializationSerializer
+from .tasks import generate_spatialization_task
 import logging
 
 logger = logging.getLogger(__name__)
 
 @extend_schema(
     methods=["POST"],
-    responses={
-        200: {
-            "type": "object",
-            "properties": {
-                "entities": {
-                    "type": "array",
-                    "items": {
-                        "type": "object",
-                        "properties": {
-                            "name": {"type": "string"},
-                            "type": {"type": "string"},
-                            "context": {"type": "string"},
-                            "país": {"type": "string"},
-                            "estado": {"type": "string"}
-                        }
-                    }
-                },
-                "geojson": {
-                    "type": "object",
-                    "description": "Objeto FeatureCollection válido de GeoJSON georreferenciado."
-                },
-                "download_url": {
-                    "type": "string",
-                    "description": "URL pública para descargar el archivo georreferenciado mapeado (.geojson, .shp.zip, .gpkg)."
-                },
-                "export_format": {
-                    "type": "string",
-                    "description": "Formato de exportación elegido por el usuario (geojson, shp, gpkg)."
-                },
-                "detected_focus": {"type": "string"}
-            },
-        }
-    },
-    summary="Detectar localidades en documentos",
-    description="Analiza los documentos de un contexto o un arreglo de archivos específicos para extraer entidades geográficas y exportarlas temporalmente.",
+    request=SpatializationCreateSerializer,
+    responses={202: "Accepted"},
+    summary="Detectar localidades asíncronamente",
+    description="Programa una tarea para procesar espacialización y devuelve un ID temporal para polling.",
     tags=["Localidades"],
 )
 @api_view(["POST"])
+@authentication_classes([KeycloakAuthentication])
 def detect_localidades(request):
-    """
-    Endpoint para detectar localidades.
-    Recibe: {"context_id": id, "file_ids": [id1, id2], "model": "...", "focus": "...", "entity_types": ["país", "infraestructura", ...], "export_format": "geojson|shp|gpkg", "geometry_type": "point|polygon|centroid"}
-    """
-    data = request.data
-    context_id = data.get("context_id")
-    file_ids = data.get("file_ids")
-    entity_types = data.get("entity_types")
-    model = data.get("model", "deepseek-r1:32b") # Fallback a deepseek-r1 si no viene
-    focus = data.get("focus", "México")
-    export_format = data.get("export_format", "geojson")
-    geometry_type = data.get("geometry_type", "point")
+    ser = SpatializationCreateSerializer(data=request.data)
+    ser.is_valid(raise_exception=True)
+    data = ser.validated_data
 
-    if not context_id and not file_ids:
-        return Response({"error": "Se requiere el parámetro 'context_id' o un arreglo de 'file_ids'"}, status=status.HTTP_400_BAD_REQUEST)
-
-    logger.info(f"Detectando localidades. context_id: {context_id}, file_ids: {file_ids}, focus: {focus}, entity_types: {entity_types}, format: {export_format}, geometry: {geometry_type}")
+    context = Context.objects.get(pk=data["context_id"])
     
-    result = extract_localities_from_context(
-        context_id=context_id, 
-        model=model, 
-        focus=focus, 
-        file_ids=file_ids, 
-        entity_types=entity_types, 
-        export_format=export_format,
-        geometry_type=geometry_type
+    user_id = None
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    report_name = data.get("report_name", "Espacialización")
+    
+    sp = Spatialization.objects.create(
+        context=context,
+        report_name=report_name,
+        entity_types=data.get("entity_types"),
+        export_format=data.get("export_format", "geojson"),
+        geometry_type=data.get("geometry_type", "point"),
+        focus=data.get("focus", "auto"),
+        user_id=user_id,
+        status="pending",
     )
-    
-    if "error" in result:
-        return Response(result, status=status.HTTP_400_BAD_REQUEST)
-        
-    return Response(result, status=status.HTTP_200_OK)
+
+    file_ids = data.get("file_ids", [])
+    if file_ids:
+        files = Files.objects.filter(id__in=file_ids)
+        sp.files_used.set(files)
+
+    authorization = request.headers.get("Authorization", "")
+    refresh_token = data.get("refresh_token", "")
+    task = generate_spatialization_task.delay(sp.id, authorization, refresh_token=refresh_token)
+
+    sp.task_id = task.id
+    sp.save(update_fields=["task_id", "updated_date"])
+
+    return Response(
+        {
+            "id": sp.id,
+            "task_id": task.id,
+            "status": sp.status,
+            "type": "espacializacion",
+        },
+        status=status.HTTP_202_ACCEPTED,
+    )
+
+@api_view(["GET"])
+@authentication_classes([KeycloakAuthentication])
+def list_spatializations(request):
+    user_id = None
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    qs = Spatialization.objects.all()
+
+    if user_id:
+        qs = qs.filter(user_id=user_id)
+
+    params = request.query_params
+    if params.get("context_id"):
+        qs = qs.filter(context_id=params["context_id"])
+
+    qs = qs.order_by("-created_date")
+    ser = SpatializationListSerializer(qs, many=True, context={"request": request})
+    return Response(ser.data)
+
+
+@api_view(["GET"])
+@authentication_classes([KeycloakAuthentication])
+def get_spatialization(request, pk: int):
+    user_id = None
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    try:
+        sp = Spatialization.objects.get(pk=pk)
+    except Spatialization.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    print(f"DEBUG get_spatialization: user_id={user_id}, sp.user_id={sp.user_id}", flush=True)
+
+    if user_id and sp.user_id and sp.user_id.lower() != user_id.lower():
+        print("DEBUG get_spatialization: FORBIDDEN!", flush=True)
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    ser = SpatializationSerializer(sp, context={"request": request})
+    return Response(ser.data)

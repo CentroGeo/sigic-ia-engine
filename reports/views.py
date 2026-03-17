@@ -61,7 +61,8 @@ def generate_report(request: Request):
     from reports.tasks import generate_report_task
     base_url = request.build_absolute_uri("/").rstrip("/")
     authorization = request.headers.get("Authorization", "")
-    task = generate_report_task.delay(report.id, base_url, authorization)
+    refresh_token = data.get("refresh_token", "")
+    task = generate_report_task.delay(report.id, base_url, authorization, refresh_token=refresh_token)
 
     report.task_id = task.id
     report.save(update_fields=["task_id", "updated_date"])

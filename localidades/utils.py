@@ -157,7 +157,18 @@ def detect_geographic_focus(text, model="deepseek-r1:32b"):
         logger.warning(f"Error detectando enfoque, usando default 'México': {str(e)}")
         return "México"
 
-def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", focus=None, file_ids=None, entity_types=None, export_format="geojson", geometry_type="point"):
+def extract_localities_from_context(
+    context_id: int, 
+    model: str, 
+    focus: str, 
+    file_ids: list = None,
+    entity_types: list = None,
+    export_format: str = "geojson",
+    geometry_type: str = "point",  # "point", "centroid", "polygon"
+    authorization: str = "",
+    refresh_token: str = "",
+    progress_callback = None
+):
     # (El cuerpo comienza con validaciones, agregamos export_format a la definicion y pasamos al final)
     """
     Usa Ollama para extraer localidades de documentos, con enfoque geográfico configurable.
@@ -200,9 +211,15 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             else:
                 focus = "México"
         
-        system_prompt = get_system_prompt(focus, entity_types)
+        # Generar prompt con los tipos de entidades mapeados para que Ollama sepa buscar
+        front_map_prompt = {"paises": "país", "estados": "estado", "municipios": "municipio", "localidades": "localidad", "infraestructura": "infraestructura"}
+        mapped_entity_types_prompt = [front_map_prompt.get(str(e).lower(), str(e).lower()) for e in entity_types] if entity_types else None
+        
+        system_prompt = get_system_prompt(focus, mapped_entity_types_prompt)
         print(system_prompt,flush=True)
 
+        total_chunks_all_files = sum(DocumentEmbedding.objects.filter(file=f).count() for f in files)
+        processed_chunks_total = 0
 
         for file in files:
             chunks = DocumentEmbedding.objects.filter(file=file).order_by('chunk_index')
@@ -221,6 +238,11 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                     batch_entities = process_entities_batch(current_batch_text, model, system_prompt, server)
                     all_entities.extend(batch_entities)
                     
+                    processed_chunks_total += current_chunk_count
+                    if progress_callback and total_chunks_all_files > 0:
+                        prog = int((processed_chunks_total / total_chunks_all_files) * 80)
+                        progress_callback(prog)
+                        
                     current_batch_text = ""
                     current_chunk_count = 0
             
@@ -228,6 +250,13 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             if current_batch_text:
                 batch_entities = process_entities_batch(current_batch_text, model, system_prompt, server)
                 all_entities.extend(batch_entities)
+                processed_chunks_total += current_chunk_count
+                if progress_callback and total_chunks_all_files > 0:
+                    prog = int((processed_chunks_total / total_chunks_all_files) * 80)
+                    progress_callback(prog)
+
+        if progress_callback:
+            progress_callback(85)
 
         # Eliminar posibles duplicados y aplicar filtro estricto (blacklist)
         unique_entities = []
@@ -241,11 +270,20 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
             "santuario", "templo", "fortaleza", "castillo", "monasterio", "calle", "avenida"
         ]
         
-        incluye_infra = (entity_types and "infraestructura" in entity_types)
+        incluye_infra = (entity_types and ("infraestructura" in entity_types))
         if incluye_infra:
             BLACKLIST = ["calle", "avenida"]  # Reducimos blacklist solo a vialidades si piden infraestructura
             
-        valid_requested = entity_types if entity_types else ["país", "estado", "municipio", "localidad"]
+        # Homologar mapeo del frontend al backend
+        front_map = {
+            "paises": "país",
+            "estados": "estado",
+            "municipios": "municipio",
+            "localidades": "localidad",
+            "infraestructura": "infraestructura"
+        }
+        mapped_types = [front_map.get(str(e).lower(), str(e).lower()) for e in entity_types] if entity_types else []
+        valid_requested = mapped_types if mapped_types else ["país", "estado", "municipio", "localidad"]
         
         for entity in all_entities:
             # Algunas veces Ollama podría no devolver el key
@@ -427,6 +465,57 @@ def extract_localities_from_context(context_id=None, model="deepseek-r1:32b", fo
                 
                 file_url = f"{settings.MEDIA_URL}geojsons/{zip_filename}"
 
+        # Opcional subida a geonode si hay authorization
+        if authorization:
+            title = f"Mapa espacializado: {base_filename}"
+            final_file_path = ""
+            content_type = ""
+            if export_format == "geojson":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.geojson")
+                content_type = "application/geo+json"
+            elif export_format == "gpkg":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.gpkg")
+                content_type = "application/geopackage+sqlite3"
+            elif export_format == "shp":
+                final_file_path = os.path.join(geojsons_dir, f"{base_filename}.zip")
+                content_type = "application/zip"
+                
+            try:
+                import io
+                from fileuploads.utils import upload_image_to_geonode
+                
+                with open(final_file_path, "rb") as f:
+                    file_bytes = f.read()
+                    
+                file_obj = io.BytesIO(file_bytes)
+                file_obj.name = os.path.basename(final_file_path)
+                file_obj.content_type = content_type
+                
+                response = upload_image_to_geonode(file_obj, os.path.basename(final_file_path), token=authorization, refresh_token=refresh_token)
+                if response is not None:
+                    print(f"[LOCALIDADES-DEBUG] GeoNode Upload HTTP Status: {response.status_code}", flush=True)
+                    if response.status_code < 400:
+                        try:
+                            response_data = response.json()
+                            print(f"[LOCALIDADES-DEBUG] GeoNode Upload JSON: {response_data}", flush=True)
+                            relative_url = response_data.get("url", "")
+                            if relative_url:
+                                geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                                file_url = f"{geonode_base}{relative_url}"
+                                print(f"[LOCALIDADES-DEBUG] Archivo subido a geonode correctamente: {file_url}", flush=True)
+                            else:
+                                print("[LOCALIDADES-DEBUG] Respuesta exitosa pero NO contiene clave 'url'", flush=True)
+                        except Exception as json_exc:
+                            print(f"[LOCALIDADES-DEBUG] Error decodificando JSON de GeoNode. Content: {response.text[:200]}...", flush=True)
+                    else:
+                        print(f"[LOCALIDADES-DEBUG] Fallo al subir archivo a geonode HTTP {response.status_code}: {response.text[:200]}", flush=True)
+                else:
+                    print(f"[LOCALIDADES-DEBUG] Fallo crítico: response was None", flush=True)
+            except Exception as geo_e:
+                import traceback
+                traceback.print_exc()
+                print(f"[LOCALIDADES-DEBUG] Excepción subiendo archivo a geonode: {str(geo_e)}", flush=True)
+
         return {
             "entities": unique_entities,
             "geojson": geojson_data,
@@ -456,7 +545,7 @@ def process_entities_batch(text, model, system_prompt, server):
             f"{server}/api/generate",
             json=payload,
             headers={"Content-Type": "application/json"},
-            timeout=int(os.environ.get("OLLAMA_TIMEOUT", 600))
+            timeout=int(os.environ.get("OLLAMA_TIMEOUT", 1800))
         )
         response.raise_for_status()
         result = response.json()
