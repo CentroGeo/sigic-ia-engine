@@ -33,6 +33,7 @@ def generate_spatialization_task(self, spatialization_id: int, authorization: st
             entity_types=sp.entity_types,
             export_format=sp.export_format,
             geometry_type=sp.geometry_type,
+            custom_instructions=sp.custom_instructions or "",
             authorization=authorization,
             refresh_token=refresh_token,
             progress_callback=set_progress

@@ -17,6 +17,7 @@ class Spatialization(models.Model):
     export_format = models.CharField(max_length=20, default="geojson")
     geometry_type = models.CharField(max_length=20, default="point")
     focus = models.CharField(max_length=255, null=True, blank=True)
+    custom_instructions = models.TextField(null=True, blank=True)
     
     status = models.CharField(max_length=20, choices=STATUS_CHOICES, default="pending")
     progress = models.IntegerField(default=0)

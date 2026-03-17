@@ -42,6 +42,7 @@ def detect_localidades(request):
         export_format=data.get("export_format", "geojson"),
         geometry_type=data.get("geometry_type", "point"),
         focus=data.get("focus", "auto"),
+        custom_instructions=data.get("custom_instructions", ""),
         user_id=user_id,
         status="pending",
     )

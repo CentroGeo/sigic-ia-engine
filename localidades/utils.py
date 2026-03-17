@@ -63,7 +63,7 @@ def fetch_osm_geometry(name, entity_type, country, state, geom_type="polygon"):
         
     return None
 
-def get_system_prompt(focus="México", entity_types=None):
+def get_system_prompt(focus="México", entity_types=None, custom_instructions=""):
     if not entity_types:
         entity_types = ["país", "estado", "municipio", "localidad"]
         
@@ -82,6 +82,16 @@ def get_system_prompt(focus="México", entity_types=None):
     if incluye_infra:
         exclusions = "10. EXCLUSIONES: Palabras aleatorias que no sean lugares geográficos concretos."
         infra_rule = "- ¿Es una INFRAESTRUCTURA/EDIFICIO/SITIO? (SÍ) -> 'Hospital Juárez', 'Museo de Antropología', 'Puente Baluarte', 'Universidad' -> (Tipo: 'infraestructura')"
+
+    # Bloque de instrucciones personalizadas del usuario (tiene prioridad sobre las reglas anteriores)
+    custom_block = ""
+    if custom_instructions and custom_instructions.strip():
+        custom_block = f"""
+
+INSTRUCCIONES ADICIONALES DEL USUARIO (PRIORIDAD MÁXIMA):
+{custom_instructions.strip()}
+Estas instrucciones tienen precedencia sobre cualquier regla anterior cuando haya ambigüedad o contradicción.
+"""
 
     return f"""
 Eres un extractor de entidades geográficas y geocodificador simultáneo.
@@ -108,6 +118,8 @@ CRITERIO DE ACEPTACIÓN:
    - ¿Es un ESTADO/PROVINCIA/DEPARTAMENTO? (SÍ) -> "Yucatán", "Normandía" -> (Tipo: 'estado')
    - ¿Es una CIUDAD/LOCALIDAD/PUEBLO? (SÍ) -> "París" -> (Tipo: 'municipio' o 'localidad')
    {infra_rule}
+
+{custom_block}
 
 FORMATO DE SALIDA ESPERADO:
 {{
@@ -165,6 +177,7 @@ def extract_localities_from_context(
     entity_types: list = None,
     export_format: str = "geojson",
     geometry_type: str = "point",  # "point", "centroid", "polygon"
+    custom_instructions: str = "",
     authorization: str = "",
     refresh_token: str = "",
     progress_callback = None
@@ -215,7 +228,7 @@ def extract_localities_from_context(
         front_map_prompt = {"paises": "país", "estados": "estado", "municipios": "municipio", "localidades": "localidad", "infraestructura": "infraestructura"}
         mapped_entity_types_prompt = [front_map_prompt.get(str(e).lower(), str(e).lower()) for e in entity_types] if entity_types else None
         
-        system_prompt = get_system_prompt(focus, mapped_entity_types_prompt)
+        system_prompt = get_system_prompt(focus, mapped_entity_types_prompt, custom_instructions)
         print(system_prompt,flush=True)
 
         total_chunks_all_files = sum(DocumentEmbedding.objects.filter(file=f).count() for f in files)

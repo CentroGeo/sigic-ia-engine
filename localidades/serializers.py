@@ -27,6 +27,7 @@ class SpatializationCreateSerializer(serializers.Serializer):
         required=False,
     )
     focus = serializers.CharField(max_length=255, required=False, allow_blank=True, default="auto")
+    custom_instructions = serializers.CharField(required=False, allow_blank=True, default="")
     refresh_token = serializers.CharField(required=False, allow_blank=True, default="")
 
     def validate(self, data):
@@ -62,6 +63,7 @@ class SpatializationSerializer(serializers.ModelSerializer):
             "export_format",
             "geometry_type",
             "focus",
+            "custom_instructions",
             "user_id",
             "status",
             "progress",
