@@ -99,6 +99,15 @@ def _parse_markdown_to_docx(doc: Document, content: str, font_name: str = "") ->
             p = doc.add_heading(line[4:].strip(), level=3)
             _apply_font(p, font_name)
 
+        # Heading 4+ → nivel 3 (docx no tiene h4 por defecto)
+        elif re.match(r"^#{4,} ", line):
+            _flush_table(doc, table_rows, font_name)
+            table_rows = []
+            in_table = False
+            text = re.sub(r"^#+\s+", "", line).strip()
+            p = doc.add_heading(text, level=3)
+            _apply_font(p, font_name)
+
         # Table row
         elif line.startswith("|"):
             cells = [c.strip() for c in line.strip().strip("|").split("|")]
@@ -113,15 +122,16 @@ def _parse_markdown_to_docx(doc: Document, content: str, font_name: str = "") ->
             _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            # Fallback a un bullet manual en vez de requerir el estilo "List Bullet"
-            _add_paragraph_with_font(doc, f"• {line[2:].strip()}", font_name)
+            clean = _strip_inline_md(line[2:].strip())
+            _add_paragraph_with_font(doc, f"• {clean}", font_name)
 
         # Numbered list
         elif re.match(r"^\d+\. ", line):
             _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            _add_paragraph_with_font(doc, line.strip(), font_name)
+            clean = _strip_inline_md(line.strip())
+            _add_paragraph_with_font(doc, clean, font_name)
 
         # Empty line — flush pending table if any
         elif line.strip() == "":
