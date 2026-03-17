@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
     time_limit=1800,
     soft_time_limit=1500,
 )
-def generate_operational(self, report_id: int, base_url: str, authorization: str = "") -> dict:
+def generate_operational(self, report_id: int, base_url: str, authorization: str = "", refresh_token: str = "") -> dict:
     """
     Tarea Celery que genera el plan geoespacial, lo ejecuta y guarda el resultado.
     """
@@ -169,13 +169,16 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
 
         file_url = ""
         filename = ""
-
+        content_type = ""   
+        
         if output_format == "geojson":
             filename = f"{base_filename}.geojson"
             file_path = os.path.join(geojsons_dir, filename)
+            file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+            content_type = "application/geo+json"
+            
             with open(file_path, "w", encoding="utf-8") as f:
                 json.dump(geojson_data, f, ensure_ascii=False, indent=2)
-            file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
         elif output_format in ["shp", "gpkg"]:
             gdf = gpd.GeoDataFrame.from_features(geojson_data["features"])
             gdf.set_crs(epsg=4326, inplace=True)
@@ -185,21 +188,60 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
                 file_path = os.path.join(geojsons_dir, filename)
                 gdf.to_file(file_path, driver="GPKG", layer="localidades")
                 file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+                content_type = "application/geopackage+sqlite3"
             elif output_format == "shp":
                 temp_shp_dir = os.path.join(geojsons_dir, f"shp_{base_filename}")
                 os.makedirs(temp_shp_dir, exist_ok=True)
                 shp_path = os.path.join(temp_shp_dir, f"{base_filename}.shp")
                 gdf.to_file(shp_path, driver="ESRI Shapefile")
-                zip_filename = f"{base_filename}.zip"
                 shutil.make_archive(os.path.join(geojsons_dir, base_filename), 'zip', temp_shp_dir)
                 shutil.rmtree(temp_shp_dir)
-                filename = zip_filename
-                file_url = f"{settings.MEDIA_URL}geojsons/{zip_filename}"
+                
+                filename = f"{base_filename}.zip"
+                file_path = os.path.join(geojsons_dir, filename)
+                file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
+                content_type = "application/zip"
+        
+        try:
+            import io
+            from fileuploads.utils import upload_image_to_geonode
+            
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+                
+            file_obj = io.BytesIO(file_bytes)
+            file_obj.name = os.path.basename(file_path)
+            file_obj.content_type = content_type
+            
+            response = upload_image_to_geonode(file_obj, os.path.basename(file_path), token=authorization, refresh_token=refresh_token)
+            if response is not None:
+                print(f"[Análisis espacial-DEBUG] GeoNode Upload HTTP Status: {response.status_code}", flush=True)
+                if response.status_code < 400:
+                    try:
+                        response_data = response.json()
+                        print(f"[Análisis espacial-DEBUG] GeoNode Upload JSON: {response_data}", flush=True)
+                        relative_url = response_data.get("url", "")
+                        if relative_url:
+                            geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                            file_url = f"{geonode_base}{relative_url}"
+                            print(f"[Análisis espacial-DEBUG] Archivo subido a geonode correctamente: {file_url}", flush=True)
+                        else:
+                            print("[Análisis espacial-DEBUG] Respuesta exitosa pero NO contiene clave 'url'", flush=True)
+                    except Exception as json_exc:
+                        print(f"[Análisis espacial-DEBUG] Error decodificando JSON de GeoNode. Content: {response.text[:200]}...", flush=True)
+                else:
+                    print(f"[Análisis espacial-DEBUG] Fallo al subir archivo a geonode HTTP {response.status_code}: {response.text[:200]}", flush=True)
+            else:
+                print(f"[Análisis espacial-DEBUG] Fallo crítico: response was None", flush=True)
+        except Exception as geo_e:
+            import traceback
+            traceback.print_exc()
+            print(f"[Análisis espacial-DEBUG] Excepción subiendo archivo a geonode: {str(geo_e)}", flush=True)
 
         # 8. Actualizar Reporte
         report.status = "done"
         report.file_path = os.path.join("geojsons", filename).replace("\\", "/")
-        report.geonode_url = base_url.rstrip("/") + file_url
+        report.geonode_url = file_url
         report.save(update_fields=["status", "file_path", "geonode_url", "updated_date"])
 
         logger.info(f"Tarea generate_operational completada exitosamente para report_id={report_id}")

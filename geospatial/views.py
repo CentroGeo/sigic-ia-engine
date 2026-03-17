@@ -459,6 +459,7 @@ def geospatial_execute_async(request):
         prompt = payload.get('instructions')
         model = payload.get('model', 'deepseek-r1:32b')
         output_format = payload.get('export_format', 'geojson')
+        refresh_token = payload.get("refresh_token", "")
         
         prompt = f"Operación: {operation}, instrucciones adicionales: {prompt})"
         
@@ -493,7 +494,7 @@ def geospatial_execute_async(request):
         from geospatial.tasks import generate_operational
         base_url = request.build_absolute_uri("/").rstrip("/")
         authorization = request.headers.get("Authorization", "")
-        task = generate_operational.delay(report.id, base_url, authorization)
+        task = generate_operational.delay(report.id, base_url, authorization, refresh_token)
 
         report.task_id = task.id
         report.save(update_fields=["task_id", "updated_date"])
