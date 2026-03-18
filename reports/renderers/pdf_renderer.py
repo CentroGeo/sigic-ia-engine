@@ -1,8 +1,22 @@
 import io
+import os
 import re
 
 import markdown as md_lib
 import weasyprint
+
+
+def _get_report_font() -> str:
+    """Devuelve la familia de fuente configurada en REPORT_FONT (default: 'Montserrat', sans-serif)."""
+    return os.environ.get("REPORT_FONT", '"Montserrat", sans-serif')
+
+
+def _google_fonts_import(font_family: str) -> str:
+    """Genera un @import de Google Fonts a partir del nombre de la fuente primaria."""
+    # Extraer el nombre de la primera fuente (quitar comillas y tomar hasta la coma)
+    primary = font_family.split(",")[0].strip().strip('"').strip("'")
+    gf_name = primary.replace(" ", "+")
+    return f'@import url("https://fonts.googleapis.com/css2?family={gf_name}:wght@400;600;700&display=swap");'
 
 
 _BASE_HTML = """<!DOCTYPE html>
@@ -10,6 +24,7 @@ _BASE_HTML = """<!DOCTYPE html>
 <head>
 <meta charset="utf-8">
 <style>
+  {google_fonts_import}
   @page {{
     margin: {margin_regular};
   }}
@@ -17,12 +32,12 @@ _BASE_HTML = """<!DOCTYPE html>
     margin-top: {margin_first_top};
     margin-bottom: {margin_first_bottom};
   }}
-  body {{ font-family: Arial, sans-serif; font-size: 12pt; line-height: 1.5; color: #222; }}
-  h1, h2, h3 {{ color: #1a1a2e; }}
+  body {{ font-family: {font_family}; font-size: 12pt; line-height: 1.5; color: #222; }}
+  h1, h2, h3 {{ color: #1a1a2e; font-family: {font_family}; }}
   table {{ border-collapse: collapse; width: 100%; margin: 1em 0; }}
   th, td {{ border: 1px solid #ccc; padding: 6px 10px; text-align: left; }}
   th {{ background: #f0f0f0; }}
-  pre, code {{ background: #f8f8f8; padding: 2px 4px; font-size: 10pt; }}
+  pre, code {{ background: #f8f8f8; padding: 2px 4px; font-size: 10pt; font-family: monospace; }}
 </style>
 </head>
 <body>{body}</body>
@@ -39,9 +54,8 @@ def render_pdf(content: str, output_format: str, use_letterhead: bool = False) -
     output_format : 'markdown' | 'plain_text'
     use_letterhead: booleano para aplicar formato SECIHTI usando plantilla_secihti.pdf
     """
-    import os
     from django.conf import settings
-    
+
     # Limpiar siempre: quitar code fences que el LLM a veces agrega
     content = _strip_code_fences(content)
 
@@ -49,6 +63,8 @@ def render_pdf(content: str, output_format: str, use_letterhead: bool = False) -
         content,
         extensions=["tables", "fenced_code", "nl2br"],
     )
+
+    font_family = _get_report_font()
 
     # Si es membretado, empujar el contenido hacia abajo y abajo-arriba
     # para no chocar con el encabezado/pie precocido en la plantilla física
@@ -60,12 +76,14 @@ def render_pdf(content: str, output_format: str, use_letterhead: bool = False) -
         margin_regular = "2cm 2cm 2cm 2cm"
         margin_first_top = "2cm"
         margin_first_bottom = "2cm"
-    
+
     html_str = _BASE_HTML.format(
-        body=body, 
+        body=body,
+        font_family=font_family,
+        google_fonts_import=_google_fonts_import(font_family),
         margin_regular=margin_regular,
         margin_first_top=margin_first_top,
-        margin_first_bottom=margin_first_bottom
+        margin_first_bottom=margin_first_bottom,
     )
     pdf_bytes = weasyprint.HTML(string=html_str).write_pdf()
     
