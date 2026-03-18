@@ -590,6 +590,45 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
             # NOTA: En lugar de devolver un .groupby().size() (que es un DataFrame normal y rompe el flujo GIS),
             # devolvemos el GeoDataFrame de los puntos/objetos que están correlacionados.
             return correlation
+
+        elif op_norm == 'density' or op_norm == 'countpointsinpolygon':
+            # 1. Identificar capas: asume gdfs[0] son puntos y gdfs[1] son polígonos
+            points = gdfs[0].copy()
+            polygons = gdfs[1].copy()
+
+            # Asegurar CRS
+            if points.crs is None: points.set_crs("EPSG:4326", inplace=True)
+            if polygons.crs is None: polygons.set_crs("EPSG:4326", inplace=True)
+            
+            if points.crs != polygons.crs:
+                points = points.to_crs(polygons.crs)
+
+            # 2. Join espacial para contar puntos por polígono
+            # Limpiar índices previos
+            if 'index_right' in points.columns: points = points.drop(columns=['index_right'])
+            
+            # Realizar el join
+            joined = gpd.sjoin(points, polygons, how="inner", predicate="within")
+            
+            # 3. Contar por el índice del polígono
+            counts = joined.index_right.value_counts().rename("point_count")
+            
+            # 4. Unir conteos al GeoDataFrame de polígonos original
+            result = polygons.merge(counts, left_index=True, right_index=True, how="left")
+            result["point_count"] = result["point_count"].fillna(0).astype(int)
+
+            # 5. Calcular densidad (puntos / área_km2)
+            # Proyectar a UTM para calcular área precisa en metros cuadrados
+            utm_crs = polygons.estimate_utm_crs()
+            polygons_utm = polygons.to_crs(utm_crs)
+            area_m2 = polygons_utm.geometry.area
+            area_km2 = area_m2 / 1_000_000.0
+            
+            # Evitar división por cero
+            result["area_km2"] = area_km2
+            result["point_density"] = result["point_count"] / result["area_km2"].replace(0, float('inf'))
+            
+            return result
         else:
             raise ValueError(f"Operación '{operation}' no implementada")
         
@@ -672,3 +711,70 @@ def get_geometry_type(gdf: gpd.GeoDataFrame) -> str:
     except Exception as e:
         logger.error(f"Error obteniendo tipo de geometría: {str(e)}")
         return "Unknown"
+
+
+def suggest_spatial_analyses(layers):
+    """
+    Sugerir posibles análisis espaciales basados en la geometría y metadata de las capas.
+    """
+    suggestions = []
+    
+    # Clasificar capas por geometría
+    points = [l for l in layers if l.get('geometry_type') in ['Point', 'MultiPoint']]
+    polygons = [l for l in layers if l.get('geometry_type') in ['Polygon', 'MultiPolygon']]
+    lines = [l for l in layers if l.get('geometry_type') in ['LineString', 'MultiLineString']]
+    # Point in Polygon / Densidad
+    if points and polygons:
+        for p in points:
+            for poly in polygons:
+                suggestions.append({
+                    "analysis": "Densidad",
+                    "description": f"Calcular la densidad de puntos de '{p['filename']}' en cada área de '{poly['filename']}'",
+                    "operation": "density",
+                    "layers": [p['file_id'], poly['file_id']]
+                })
+
+    # Intersection/Union entre Polígonos
+    if len(polygons) >= 2:
+        for i in range(len(polygons)):
+            for j in range(i + 1, len(polygons)):
+                suggestions.append({
+                    "analysis": "Intersection",
+                    "description": f"Encontrar el área común entre '{polygons[i]['filename']}' y '{polygons[j]['filename']}'",
+                    "operation": "intersection",
+                    "layers": [polygons[i]['file_id'], polygons[j]['file_id']]
+                })
+
+    # Proximity (Buffer)
+    for l in layers:
+        if l.get('geometry_type') != 'Empty':
+            suggestions.append({
+                "analysis": "Buffer",
+                "description": f"Crear un área de influencia alrededor de '{l['filename']}'",
+                "operation": "buffer",
+                "layers": [l['file_id']],
+                "suggested_params": {"distance": 500}
+            })
+
+    # Snap (Puntos a Líneas)
+    if points and lines:
+        for p in points:
+            for line in lines:
+                suggestions.append({
+                    "analysis": "Snapping",
+                    "description": f"Ajustar los puntos de '{p['filename']}' a la línea más cercana de '{line['filename']}'",
+                    "operation": "snap",
+                    "layers": [p['file_id'], line['file_id']]
+                })
+
+    # Clustering Espacial (Agrupamiento)
+    for p in points:
+        suggestions.append({
+            "analysis": "Clustering Espacial",
+            "description": f"Identificar agrupamientos (Hotspots) de puntos en '{p['filename']}' usando técnicas de densidad",
+            "operation": "clustering",
+            "layers": [p['file_id']],
+            "suggested_params": {"method": "dbscan", "radius": 500}
+        })
+
+    return suggestions

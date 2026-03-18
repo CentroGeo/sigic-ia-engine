@@ -29,7 +29,8 @@ from .geospatial_utils import (
         execute_geospatial_plan,
         gdf_to_geojson_dict,
         save_geojson_file,
-        get_geometry_type
+        get_geometry_type,
+        suggest_spatial_analyses
     )
 from .prompt_geospacial import BASE_SYSTEM_PROMPT_GEOSPACIAL
 from django.http import FileResponse
@@ -512,4 +513,63 @@ def geospatial_execute_async(request):
         return JsonResponse({"error": f"Contexto {context_id} no encontrado"}, status=404)
     except Exception as e:
         logger.error(f"Error en geospatial_execute_async: {str(e)}")
+        return JsonResponse({"error": str(e)}, status=500)
+
+@extend_schema(
+    methods=["POST"],
+    responses={
+        200: {
+            "type": "object",
+            "properties": {
+                "layers": {"type": "array"},
+                "suggested_analyses": {"type": "array"},
+                "count": {"type": "integer"}
+            },
+        }
+    },
+    summary="Descubrir capas y sugerir análisis (POST)",
+    description="Descubre capas GeoJSON y sugiere posibles análisis espaciales entre ellas.",
+    tags=["Spatial Analysis"],
+)
+@api_view(["POST"])
+def discover_and_suggest_analysis(request):
+    """
+    API para descubrir capas y sugerir qué análisis espaciales se pueden realizar.
+    """
+    try:
+        payload = request.data
+        context_id = payload.get('context_id')
+        
+        if not context_id:
+            return JsonResponse({"error": "Se requiere context_id"}, status=400)
+        
+        try:
+            Context.objects.get(id=context_id)
+        except Context.DoesNotExist:
+            return JsonResponse({"error": f"Contexto {context_id} no encontrado"}, status=404)
+        
+        # 1. capas disponibles
+        layers = DocumentEmbedding.discover_geojson_layers(context_id)
+        
+        if not layers:
+            return JsonResponse({
+                "layers": [],
+                "suggested_analyses": [],
+                "count": 0,
+                "message": "No se encontraron capas GeoJSON en este contexto."
+            }, status=200)
+            
+        # 2. análisis basados en las capas encontradas
+        suggested_analyses = suggest_spatial_analyses(layers)
+        
+        logger.info(f"Descubiertas {len(layers)} capas y generadas {len(suggested_analyses)} sugerencias para contexto {context_id}")
+        
+        return JsonResponse({
+            "layers": layers,
+            "suggested_analyses": suggested_analyses,
+            "count": len(layers)
+        }, status=200)
+        
+    except Exception as e:
+        logger.error(f"Error en discover_and_suggest_analysis: {str(e)}")
         return JsonResponse({"error": str(e)}, status=500)
