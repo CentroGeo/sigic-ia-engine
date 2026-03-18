@@ -46,10 +46,11 @@ def generate_spatialization_task(self, spatialization_id: int, authorization: st
             return {"error": result["error"]}
             
         sp.status = "done"
+        sp.progress = 100
         if "download_url" in result:
             sp.geonode_url = result["download_url"]
             
-        sp.save(update_fields=["status", "geonode_url", "updated_date"])
+        sp.save(update_fields=["status", "progress", "geonode_url", "updated_date"])
         
         return {"geonode_url": sp.geonode_url}
         
