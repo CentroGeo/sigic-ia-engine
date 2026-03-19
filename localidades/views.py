@@ -112,3 +112,22 @@ def get_spatialization(request, pk: int):
 
     ser = SpatializationSerializer(sp, context={"request": request})
     return Response(ser.data)
+
+
+@api_view(["DELETE"])
+@authentication_classes([KeycloakAuthentication])
+def delete_spatialization(request, pk: int):
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    try:
+        sp = Spatialization.objects.get(pk=pk)
+    except Spatialization.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    if user_id and sp.user_id and sp.user_id.lower() != user_id.lower():
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    sp.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

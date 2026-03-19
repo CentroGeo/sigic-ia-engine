@@ -140,3 +140,27 @@ def get_report(request: Request, pk: int):
 
     ser = ReportSerializer(report, context={"request": request})
     return Response(ser.data)
+
+
+@api_view(["DELETE"])
+@authentication_classes([KeycloakAuthentication])
+def delete_report(request: Request, pk: int):
+    """
+    DELETE /api/reports/{id}/delete/
+
+    Elimina un reporte. Solo acceso al propio user_id.
+    """
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("email")
+
+    try:
+        report = Report.objects.get(pk=pk)
+    except Report.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    if user_id and report.user_id and report.user_id != user_id:
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    report.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)
