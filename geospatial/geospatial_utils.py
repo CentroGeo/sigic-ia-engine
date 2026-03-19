@@ -54,7 +54,6 @@ def load_geojson_to_gdf(file_ids: List[int]) -> gpd.GeoDataFrame:
         # Combinación de todos los features
         all_features = []
         for file_id, geojson_data in rows:
-            print("geojson_data", geojson_data, file_id, flush=True)
             if isinstance(geojson_data, str):
                 try:
                     geojson_data = json.loads(geojson_data)
@@ -210,6 +209,10 @@ def execute_geospatial_plan(plan: Dict[str, Any], initial_layers: Dict[int, gpd.
             
             # Ejecutación de operación
             result_gdf = execute_operation(operation_name, input_gdfs, parameters)
+            
+            # Limpiar columnas duplicadas que pueden generarse en sjoins / concats
+            if not result_gdf.empty and result_gdf.columns.duplicated().any():
+                result_gdf = result_gdf.loc[:, ~result_gdf.columns.duplicated(keep='first')]
             
             results[output_name] = result_gdf
         
@@ -648,6 +651,10 @@ def gdf_to_geojson_dict(gdf: gpd.GeoDataFrame) -> Dict:
         Diccionario en formato GeoJSON
     """
     try:
+        # Limpiar columnas duplicadas antes de exportar
+        if not gdf.empty and gdf.columns.duplicated().any():
+            gdf = gdf.loc[:, ~gdf.columns.duplicated(keep='first')]
+            
         # Converte a GeoJSON string y luego a dict
         geojson_str = gdf.to_json()
         return json.loads(geojson_str)

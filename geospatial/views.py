@@ -167,6 +167,7 @@ def geospatial_execute(request):
         payload = request.data
         context_id = payload.get('context_id')
         selected_layers = payload.get('file_ids')
+        operation = payload.get('operation')
         report_name = payload.get('report_name')
         prompt = payload.get('instructions')
         model = payload.get('model', 'deepseek-r1:32b')
@@ -214,19 +215,130 @@ def geospatial_execute(request):
         
         print(f"Generando plan geoespacial para {len(file_ids)} capas", flush=True)
         
-        # Contexto para el modelo de IA
-        layers_context = json.dumps(list(layers_dict.values()), indent=2)
-        
-        
-        llm_prompt = f"""
-            CAPAS DISPONIBLES:
-            {layers_context}
+        if operation == "interseccion":
+            logger.info(f"Operación 'interseccion' detectada. Generando plan optimizado multipaso.")
+            
+            # Clasifica las capas por geometría
+            point_ids = []
+            polygon_ids = []
+            for fid, layer in layers_dict.items():
+                geom_type = layer.get('geometry_type', '').upper()
+                if 'POINT' in geom_type or 'LINE' in geom_type:
+                    point_ids.append(fid)
+                elif 'POLYGON' in geom_type:
+                    polygon_ids.append(fid)
+                else:
+                    point_ids.append(fid)
 
-            SOLICITUD DEL USUARIO:
-            {prompt}
+            steps = []
+            current_points = None
+            current_polys = None
 
-            Genera el plan en JSON.
-        """
+            # 1. Agrupa los puntos
+            if point_ids:
+                if len(point_ids) > 1:
+                    steps.append({"operation": "union", "input_layers": point_ids, "output_name": "merged_points"})
+                    current_points = "merged_points"
+                else:
+                    current_points = point_ids[0]
+
+            # 2. Intersecar los polígonos
+            if polygon_ids:
+                if len(polygon_ids) > 1:
+                    steps.append({"operation": "intersection", "input_layers": polygon_ids, "output_name": "intersected_polys"})
+                    current_polys = "intersected_polys"
+                else:
+                    current_polys = polygon_ids[0]
+
+            # 3. Cruce final
+            if current_points and current_polys:
+                steps.append({"operation": "intersection", "input_layers": [current_points, current_polys], "output_name": "final_intersection"})
+                final_output = "final_intersection"
+            elif current_points:
+                final_output = current_points
+            elif current_polys:
+                final_output = current_polys
+            else:
+                final_output = "empty_result"
+
+            plan = {
+                "steps": steps if steps else [{"operation": "union", "input_layers": [current_points or current_polys or file_ids[0]], "output_name": "final_output"}],
+                "final_output": final_output if steps else "final_output"
+            }
+        elif operation == "buffer":
+            logger.info(f"Operación 'buffer' detectada. Extrayendo distancia con LLM.")
+            
+            llm_prompt = f"""
+                SOLICITUD DEL USUARIO:
+                {prompt}
+                
+                Extrae la distancia mencionada para hacer un buffer y conviértela a metros.
+                Si no menciona distancia explícitamente, usa 1000 por defecto.
+                Responde ÚNICAMENTE con un JSON válido con la siguiente estructura y NADA MÁS:
+                {{"distance": numero_en_metros}}
+            """
+            
+            server = settings.OLLAMA_API_URL
+            url = f"{server}/api/chat"
+            
+            plan_payload = {
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": llm_prompt},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0
+                }
+            }
+            
+            try:
+                resp = requests.post(url, json=plan_payload, headers={"Content-Type": "application/json"}, timeout=60)
+                resp.raise_for_status()
+                data = resp.json()
+                dist_str = data["message"]["content"].strip()
+                import re
+                dist_str_cleaned = re.sub(r'<think>.*?</think>', '', dist_str, flags=re.DOTALL).strip()
+                json_match = re.search(r'(\{.*\})', dist_str_cleaned, re.DOTALL)
+                if json_match:
+                    dist_json = json.loads(json_match.group(1))
+                else:
+                    dist_json = json.loads(dist_str_cleaned)
+                distance = float(dist_json.get("distance", 1000))
+            except Exception as e:
+                logger.error(f"Error extrayendo distancia del LLM, usando 1000m por defecto: {e}")
+                distance = 1000.0
+                
+            steps = []
+            if len(file_ids) > 1:
+                steps.append({"operation": "union", "input_layers": file_ids, "output_name": "merged_for_buffer"})
+                input_for_buffer = "merged_for_buffer"
+            else:
+                input_for_buffer = file_ids[0]
+                
+            steps.append({
+                "operation": "buffer", 
+                "input_layers": [input_for_buffer], 
+                "parameters": {"distance": distance}, 
+                "output_name": "final_buffer"
+            })
+            
+            plan = {"steps": steps, "final_output": "final_buffer"}
+        else:
+            # Contexto para el modelo de IA
+            layers_context = json.dumps(list(layers_dict.values()), indent=2)
+            
+            
+            llm_prompt = f"""
+                CAPAS DISPONIBLES:
+                {layers_context}
+    
+                SOLICITUD DEL USUARIO:
+                {prompt}
+    
+                Genera el plan en JSON.
+            """
         
         server = settings.OLLAMA_API_URL
         url = f"{server}/api/chat"
@@ -495,7 +607,7 @@ def geospatial_execute_async(request):
         from geospatial.tasks import generate_operational
         base_url = request.build_absolute_uri("/").rstrip("/")
         authorization = request.headers.get("Authorization", "")
-        task = generate_operational.delay(report.id, base_url, authorization, refresh_token)
+        task = generate_operational.delay(report.id, base_url, authorization, refresh_token, operation=operation)
 
         report.task_id = task.id
         report.save(update_fields=["task_id", "updated_date"])

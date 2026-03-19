@@ -31,7 +31,7 @@ logger = logging.getLogger(__name__)
     time_limit=1800,
     soft_time_limit=1500,
 )
-def generate_operational(self, report_id: int, base_url: str, authorization: str = "", refresh_token: str = "") -> dict:
+def generate_operational(self, report_id: int, base_url: str, authorization: str = "", refresh_token: str = "", operation: str = "") -> dict:
     """
     Tarea Celery que genera el plan geoespacial, lo ejecuta y guarda el resultado.
     """
@@ -67,51 +67,162 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
         if not layers_dict:
             raise ValueError("Ninguna de las capas seleccionadas está disponible")
 
-        # 3. Llamada al LLM para generar el plan
-        logger.info(f"Generando plan con LLM para el reporte {report_id} usando modelo {model}")
-        layers_context = json.dumps(list(layers_dict.values()), indent=2)
-        llm_prompt = f"""
-            CAPAS DISPONIBLES:
-            {layers_context}
+        # 3. Generación del plan
+        if operation == "interseccion":
+            logger.info(f"Operación 'interseccion' detectada. Generando plan optimizado multipaso.")
+            
+            # Clasifica las capas por geometría
+            point_ids = []
+            polygon_ids = []
+            for fid, layer in layers_dict.items():
+                geom_type = layer.get('geometry_type', '').upper()
+                if 'POINT' in geom_type or 'LINE' in geom_type:
+                    point_ids.append(fid)
+                elif 'POLYGON' in geom_type:
+                    polygon_ids.append(fid)
+                else:
+                    point_ids.append(fid)
 
-            SOLICITUD DEL USUARIO:
-            {prompt}
+            steps = []
+            current_points = None
+            current_polys = None
 
-            Genera el plan en JSON.
-        """
-        
-        server = settings.OLLAMA_API_URL
-        url = f"{server}/api/chat"
-        
-        plan_payload = {
-            "model": model,
-            "messages": [
-                {"role": "system", "content": BASE_SYSTEM_PROMPT_GEOSPACIAL},
-                {"role": "user", "content": f"{llm_prompt}\nRESPONDE ÚNICAMENTE CON EL JSON TÉCNICO SIGUIENDO EL ESQUEMA DE STEPS."},
-            ],
-            "stream": False,
-            "format": "json",
-            "options": {
-                "temperature": 0
+            # 1. Agrupa los puntos
+            if point_ids:
+                if len(point_ids) > 1:
+                    steps.append({"operation": "union", "input_layers": point_ids, "output_name": "merged_points"})
+                    current_points = "merged_points"
+                else:
+                    current_points = point_ids[0]
+
+            # 2. Intersecta los polígonos
+            if polygon_ids:
+                if len(polygon_ids) > 1:
+                    steps.append({"operation": "intersection", "input_layers": polygon_ids, "output_name": "intersected_polys"})
+                    current_polys = "intersected_polys"
+                else:
+                    current_polys = polygon_ids[0]
+
+            # 3. Cruce final
+            if current_points and current_polys:
+                steps.append({"operation": "intersection", "input_layers": [current_points, current_polys], "output_name": "final_intersection"})
+                final_output = "final_intersection"
+            elif current_points:
+                final_output = current_points
+            elif current_polys:
+                final_output = current_polys
+            else:
+                final_output = "empty_result"
+
+            plan = {
+                "steps": steps if steps else [{"operation": "union", "input_layers": [current_points or current_polys or file_ids[0]], "output_name": "final_output"}],
+                "final_output": final_output if steps else "final_output"
             }
-        }
-        
-        resp = requests.post(
-            url, json=plan_payload, headers={"Content-Type": "application/json"}, timeout=500
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        plan_str = data["message"]["content"].strip()
-        logger.info(f"Respuesta del LLM recibida para el reporte {report_id}")
-        
-        # 4. Parsear plan
-        logger.info(f"Parseando plan JSON para el reporte {report_id}")
-        plan_str_cleaned = re.sub(r'<think>.*?</think>', '', plan_str, flags=re.DOTALL).strip()
-        json_match = re.search(r'(\{.*\})', plan_str_cleaned, re.DOTALL)
-        if json_match:
-            plan = json.loads(json_match.group(1))
+        elif operation == "buffer":
+            logger.info(f"Operación 'buffer' detectada. Extrayendo distancia con LLM.")
+            
+            llm_prompt = f"""
+                SOLICITUD DEL USUARIO:
+                {prompt}
+                
+                Extrae la distancia mencionada para hacer un buffer y conviértela a metros.
+                Si no menciona distancia explícitamente, usa 1000 por defecto.
+                Responde ÚNICAMENTE con un JSON válido con la siguiente estructura y NADA MÁS:
+                {{"distance": numero_en_metros}}
+            """
+            
+            server = settings.OLLAMA_API_URL
+            url = f"{server}/api/chat"
+            
+            plan_payload = {
+                "model": model,
+                "messages": [
+                    {"role": "user", "content": llm_prompt},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0
+                }
+            }
+            
+            try:
+                resp = requests.post(url, json=plan_payload, headers={"Content-Type": "application/json"}, timeout=60)
+                resp.raise_for_status()
+                data = resp.json()
+                dist_str = data["message"]["content"].strip()
+                import re
+                dist_str_cleaned = re.sub(r'<think>.*?</think>', '', dist_str, flags=re.DOTALL).strip()
+                json_match = re.search(r'(\{.*\})', dist_str_cleaned, re.DOTALL)
+                if json_match:
+                    dist_json = json.loads(json_match.group(1))
+                else:
+                    dist_json = json.loads(dist_str_cleaned)
+                distance = float(dist_json.get("distance", 1000))
+            except Exception as e:
+                logger.error(f"Error extrayendo distancia del LLM, usando 1000m por defecto: {e}")
+                distance = 1000.0
+                
+            steps = []
+            if len(file_ids) > 1:
+                steps.append({"operation": "union", "input_layers": file_ids, "output_name": "merged_for_buffer"})
+                input_for_buffer = "merged_for_buffer"
+            else:
+                input_for_buffer = file_ids[0]
+                
+            steps.append({
+                "operation": "buffer", 
+                "input_layers": [input_for_buffer], 
+                "parameters": {"distance": distance}, 
+                "output_name": "final_buffer"
+            })
+            
+            plan = {"steps": steps, "final_output": "final_buffer"}
         else:
-            plan = json.loads(plan_str_cleaned)
+            logger.info(f"Generando plan con LLM para el reporte {report_id} usando modelo {model}")
+            layers_context = json.dumps(list(layers_dict.values()), indent=2)
+            llm_prompt = f"""
+                CAPAS DISPONIBLES:
+                {layers_context}
+    
+                SOLICITUD DEL USUARIO:
+                {prompt}
+    
+                Genera el plan en JSON.
+            """
+            
+            server = settings.OLLAMA_API_URL
+            url = f"{server}/api/chat"
+            
+            plan_payload = {
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": BASE_SYSTEM_PROMPT_GEOSPACIAL},
+                    {"role": "user", "content": f"{llm_prompt}\nRESPONDE ÚNICAMENTE CON EL JSON TÉCNICO SIGUIENDO EL ESQUEMA DE STEPS."},
+                ],
+                "stream": False,
+                "format": "json",
+                "options": {
+                    "temperature": 0
+                }
+            }
+            
+            resp = requests.post(
+                url, json=plan_payload, headers={"Content-Type": "application/json"}, timeout=500
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            plan_str = data["message"]["content"].strip()
+            logger.info(f"Respuesta del LLM recibida para el reporte {report_id}")
+            
+            # 4. Parsear plan
+            logger.info(f"Parseando plan JSON para el reporte {report_id}")
+            plan_str_cleaned = re.sub(r'<think>.*?</think>', '', plan_str, flags=re.DOTALL).strip()
+            json_match = re.search(r'(\{.*\})', plan_str_cleaned, re.DOTALL)
+            if json_match:
+                plan = json.loads(json_match.group(1))
+            else:
+                plan = json.loads(plan_str_cleaned)
 
         # 5. Planificación y Validación
         plan_input_ids = set()
