@@ -151,7 +151,6 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
                 resp.raise_for_status()
                 data = resp.json()
                 dist_str = data["message"]["content"].strip()
-                import re
                 dist_str_cleaned = re.sub(r'<think>.*?</think>', '', dist_str, flags=re.DOTALL).strip()
                 json_match = re.search(r'(\{.*\})', dist_str_cleaned, re.DOTALL)
                 if json_match:
@@ -178,6 +177,38 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
             })
             
             plan = {"steps": steps, "final_output": "final_buffer"}
+        elif operation.lower() in ["densidad", "density"]:
+            logger.info("Operación 'densidad' detectada. Generando plan automático multipaso.")
+            point_ids = []
+            polygon_ids = []
+            for fid, layer in layers_dict.items():
+                geom_type = layer.get('geometry_type', '').upper()
+                if 'POINT' in geom_type or 'LINE' in geom_type:
+                    point_ids.append(fid)
+                elif 'POLYGON' in geom_type:
+                    polygon_ids.append(fid)
+                    
+            if not point_ids or not polygon_ids:
+                raise ValueError("La operación Densidad requiere al menos una capa de puntos y una de polígonos.")
+                
+            steps = []
+            current_points = point_ids[0]
+            if len(point_ids) > 1:
+                steps.append({"operation": "union", "input_layers": point_ids, "output_name": "merged_points"})
+                current_points = "merged_points"
+                
+            current_polys = polygon_ids[0]
+            if len(polygon_ids) > 1:
+                steps.append({"operation": "union", "input_layers": polygon_ids, "output_name": "merged_polys"})
+                current_polys = "merged_polys"
+                
+            steps.append({
+                "operation": "density",
+                "input_layers": [current_points, current_polys],
+                "output_name": "final_density"
+            })
+            
+            plan = {"steps": steps, "final_output": "final_density"}
         else:
             logger.info(f"Generando plan con LLM para el reporte {report_id} usando modelo {model}")
             layers_context = json.dumps(list(layers_dict.values()), indent=2)

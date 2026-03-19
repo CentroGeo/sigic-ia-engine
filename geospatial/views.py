@@ -23,6 +23,7 @@ from django.db import connection
 from django.conf import settings
 import os
 import logging
+import re
 from .geospatial_utils import (
         load_geojson_to_gdf,
         validate_plan,
@@ -298,7 +299,6 @@ def geospatial_execute(request):
                 resp.raise_for_status()
                 data = resp.json()
                 dist_str = data["message"]["content"].strip()
-                import re
                 dist_str_cleaned = re.sub(r'<think>.*?</think>', '', dist_str, flags=re.DOTALL).strip()
                 json_match = re.search(r'(\{.*\})', dist_str_cleaned, re.DOTALL)
                 if json_match:
@@ -325,6 +325,38 @@ def geospatial_execute(request):
             })
             
             plan = {"steps": steps, "final_output": "final_buffer"}
+        elif operation.lower() in ["densidad", "density"]:
+            logger.info("Operación 'densidad' detectada. Generando plan automático multipaso.")
+            point_ids = []
+            polygon_ids = []
+            for fid, layer in layers_dict.items():
+                geom_type = layer.get('geometry_type', '').upper()
+                if 'POINT' in geom_type or 'LINE' in geom_type:
+                    point_ids.append(fid)
+                elif 'POLYGON' in geom_type:
+                    polygon_ids.append(fid)
+                    
+            if not point_ids or not polygon_ids:
+                return JsonResponse({"error": "La operación Densidad requiere al menos una capa de puntos y una de polígonos."}, status=400)
+                
+            steps = []
+            current_points = point_ids[0]
+            if len(point_ids) > 1:
+                steps.append({"operation": "union", "input_layers": point_ids, "output_name": "merged_points"})
+                current_points = "merged_points"
+                
+            current_polys = polygon_ids[0]
+            if len(polygon_ids) > 1:
+                steps.append({"operation": "union", "input_layers": polygon_ids, "output_name": "merged_polys"})
+                current_polys = "merged_polys"
+                
+            steps.append({
+                "operation": "density",
+                "input_layers": [current_points, current_polys],
+                "output_name": "final_density"
+            })
+            
+            plan = {"steps": steps, "final_output": "final_density"}
         else:
             # Contexto para el modelo de IA
             layers_context = json.dumps(list(layers_dict.values()), indent=2)
@@ -373,7 +405,6 @@ def geospatial_execute(request):
         # manejo de bloques <think> y texto extra
         try:
             # 1. limpieza de bloques <think> si existen
-            import re
             plan_str_cleaned = re.sub(r'<think>.*?</think>', '', plan_str, flags=re.DOTALL).strip()
             
             # 2. buscador de bloque JSON (el primer { y el último })

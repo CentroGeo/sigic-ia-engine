@@ -174,6 +174,13 @@ OPERATIONS = {
         "needs_distance": False,
         "label": "Clustering Espacial (DBSCAN)"
     },
+    "density": {
+        "min_layers": 2,
+        "max_layers": 2,
+        "requires_geom": ["ANY", "ANY"],
+        "needs_distance": False,
+        "label": "Densidad (puntos por área)"
+    },
     "spatial_correlation": {
         "min_layers": 2,
         "max_layers": 2,

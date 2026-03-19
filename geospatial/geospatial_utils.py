@@ -199,7 +199,7 @@ def execute_geospatial_plan(plan: Dict[str, Any], initial_layers: Dict[int, gpd.
             
             logger.info(f"Ejecutando paso {i+1}: {operation_name}")
             
-            # Obteneción de capas de entrada
+            # Obtención de capas de entrada
             input_gdfs = []
             for layer_id in input_layer_ids:
                 if isinstance(layer_id, int):
@@ -207,10 +207,10 @@ def execute_geospatial_plan(plan: Dict[str, Any], initial_layers: Dict[int, gpd.
                 else:
                     input_gdfs.append(results[layer_id])
             
-            # Ejecutación de operación
+            # Ejecución de operación
             result_gdf = execute_operation(operation_name, input_gdfs, parameters)
             
-            # Limpiar columnas duplicadas que pueden generarse en sjoins / concats
+            # Limpia columnas duplicadas que pueden generarse en sjoins / concats
             if not result_gdf.empty and result_gdf.columns.duplicated().any():
                 result_gdf = result_gdf.loc[:, ~result_gdf.columns.duplicated(keep='first')]
             
@@ -594,7 +594,7 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
             # devolvemos el GeoDataFrame de los puntos/objetos que están correlacionados.
             return correlation
 
-        elif op_norm == 'density' or op_norm == 'countpointsinpolygon':
+        elif op_norm in ['density', 'countpointsinpolygon', 'densidad']:
             # 1. Identificar capas: asume gdfs[0] son puntos y gdfs[1] son polígonos
             points = gdfs[0].copy()
             polygons = gdfs[1].copy()
