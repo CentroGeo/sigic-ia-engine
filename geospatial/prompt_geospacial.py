@@ -55,6 +55,7 @@ OPERACIONES DISPONIBLES
 16. update_attributes: (1 CAPA) Agrega campos.
 17. clustering: (PUNTOS) Identifica Hotspots/Agrupamientos. Agrega `cluster_id`.
 18. spatial_correlation: (2 CAPAS PUNTOS) Analiza co-ocurrencia espacial.
+19. density: (2 CAPAS) Calcula densidad geométrica de puntos sobre polígonos.
 
 🔵 OPERACIONES DE 1 CAPA:
 
@@ -163,6 +164,11 @@ OPERACIONES DISPONIBLES
     - Parámetro recomendado: distance (radio de proximidad en metros).
     - Uso: Analizar si eventos de tipo A ocurren cerca de eventos de tipo B, o si eventos ocurren dentro de "zonas" específicas (ej: delitos en zonas de peligro, accidentes en zonas conflictivas).
     - Ejemplo: {{"operation": "spatial_correlation", "input_layers": [1, 2], "parameters": {{"distance": 100}}}}
+
+19. density
+    - Requiere: 2 capas EXACTAMENTE (la primera debe ser puntos, la segunda polígonos).
+    - Uso: Calcula la cantidad de puntos que caen dentro de cada polígono y la densidad por km².
+    - Ejemplo: {{"operation": "density", "input_layers": [1, 2], "parameters": {{}}}}
     
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 REGLAS CRÍTICAS
@@ -173,19 +179,19 @@ REGLAS CRÍTICAS
 3. REGLA DE ORO (ESENCIAL): 
    - Para mapas de calor, buffers o choropleths sobre "todo", usa PRIMERO `union` para agrupar.
    - Para `spatial_overlay_count`, NUNCA UNAS las capas. Deben ir por separado para que el sistema pueda identificar los traslapes.
-4. INTERSECCIÓN ROBUSTA: Si el usuario pide "puntos dentro de polígonos" o "intersección de puntos", usa `spatial_join` con `predicate="intersects"`. Reserva `intersection` para recortes geométricos físicos (especialmente entre polígonos).
-5. MULTICAPA (CRÍTICO): Si el usuario menciona "las capas", "capas seleccionadas" o "todas las capas" para una intersección, unión o unión espacial, incluye TODOS los `file_id` relevantes del mismo tipo en el mismo paso. Las operaciones `intersection`, `union` y `spatial_join` soportan hasta 10 capas simultáneamente. 
-6. AGRUPACIÓN POR TIPO: Si hay múltiples capas de puntos y múltiples de polígonos y se pide la "intersección de todas":
-   - Paso 1: `union` de todas las capas de PUNTOS.
-   - Paso 2: `intersection` de todas las capas de POLÍGONOS.
-   - Paso 3: `spatial_join` entre el resultado de puntos y el resultado de polígonos.
-   - NUNCA pongas dos capas de puntos en la misma `intersection` o `spatial_join` a menos que busques puntos exactamente coincidentes.
+4. INTERSECCIONES CON GEOMETRÍAS MIXTAS: Si hay EXACTAMENTE una capa de puntos y EXACTAMENTE una de polígonos, usa `spatial_join` (puntos siempre como `input_layers[0]`). NUNCA agregues más de 2 capas a un `spatial_join`.
+5. MULTICAPA (CRÍTICO): Las operaciones `intersection` y `union` soportan múltiples capas, pero SÓLO DEL MISMO TIPO. NUNCA mezcles tipos de geometría diferentes (ej: puntos con polígonos) en un solo paso de `intersection` o de `union`.
+6. AGRUPACIÓN OBLIGATORIA (MÚLTIPLES TIPOS): Si el usuario pide intersectar "todas las capas" y en las CAPAS DISPONIBLES hay una mezcla (puntos + polígonos), TIENES PROHIBIDO hacer un solo paso. DEBES usar este plan estricto:
+   - Paso 1: `union` de todas las capas de PUNTOS -> output_name: "puntos_unidos".
+   - Paso 2: `intersection` de todas las capas de POLÍGONOS -> output_name: "poligonos_intersectados".
+   - Paso 3: `spatial_join` entre ambos. DEBE tener esta sintaxis estricta: `"input_layers": ["puntos_unidos", "poligonos_intersectados"]`.
 7. VALIDACIÓN: Verifica que las capas tengan geometrías compatibles.
-8. PRIORIDAD DE FILTRO: Si el usuario menciona una entidad específica por nombre, DEBES usar `filter`.
+8. USO DE FILTROS: Usa `filter` ÚNICAMENTE si el usuario especifica condiciones matemáticas explícitas (ej: "poblacion > 500"). NUNCA agregues pasos `filter` en blanco o sin parámetros. NUNCA inventes pasos u operaciones extras que no se te hayan pedido.
 9. NO expliques el plan. NO uses markdown. SOLO devuelve el JSON técnico con `steps`.
 10. SIEMPRE usa `snap` para "reubicar". NUNCA uses `spatial_join` para este propósito.
 11. FALLBACK REGIONAL: Si el usuario menciona una región y NO hay atributo de región, USA `filter_by_bbox`.
 12. REGLA DE HOTSPOTS (CRÍTICA): Si el usuario pide "hotspots", "agrupamientos" o "áreas de concentración", usa SIEMPRE la operación `clustering`. Genera un atributo `cluster_id` que es indispensable para el análisis.
+13. OÍDO AL USUARIO (CRÍTICA): Si el usuario te especifica SECUENCIAS explícitas (ej: "quiero hacer primero una union entre capa a y b, y despues intersectar con capa c y d"), DEBES obedecer estrictamente los pasos de su receta. Además, asegúrate de que CADA OPERACIÓN cumpla con sus requerimientos de `input_layers`. NUNCA inventes pasos (no agregues un spatial_join extra si no te lo pidieron), y NUNCA le des menos de 2 capas a `spatial_join` o `intersection`.
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 EJEMPLOS TÉCNICOS
