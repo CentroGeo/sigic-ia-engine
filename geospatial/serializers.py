@@ -16,6 +16,7 @@ class GeoSpatializationListSerializer(serializers.ModelSerializer):
             "geonode_url",
             "created_date",
             "download_url",
+            "report_type"
         ]
 
     def get_download_url(self, obj):

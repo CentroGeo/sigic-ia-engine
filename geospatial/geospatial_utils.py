@@ -631,6 +631,35 @@ def execute_operation(operation: str, gdfs: List[gpd.GeoDataFrame], params: Dict
             result["area_km2"] = area_km2
             result["point_density"] = result["point_count"] / result["area_km2"].replace(0, float('inf'))
             
+            # 6. Clasificar por quintiles (Basado en el valor máximo de la capa)
+            if not result.empty:
+                try:
+                    import pandas as _pd
+                    import numpy as _np
+                    # Forzar a numérico y llenar NaNs
+                    d_numeric = _pd.to_numeric(result["point_density"], errors='coerce').fillna(0)
+                    m_val = float(d_numeric.max())
+                    
+                    if m_val > 0:
+                        # 5 intervalos iguales desde 0 hasta el valor máximo (0-20%, 20-40%, etc.)
+                        i_bins = _np.linspace(0, m_val, 6)
+                        i_labels = ["Muy Baja", "Baja", "Media", "Alta", "Muy Alta"]
+                        
+                        # Asignar categorías
+                        result["density_quintile"] = _pd.cut(
+                            d_numeric, 
+                            bins=i_bins, 
+                            labels=i_labels, 
+                            include_lowest=True
+                        ).astype(str)
+                    else:
+                        result["density_quintile"] = "Muy Baja"
+                except Exception as e:
+                    logger.error(f"Error clasificando quintiles de densidad: {str(e)}")
+                    result["density_quintile"] = "Sin datos"
+            else:
+                result["density_quintile"] = "Sin datos"
+
             return result
         else:
             raise ValueError(f"Operación '{operation}' no implementada")
