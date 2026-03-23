@@ -1,24 +1,29 @@
 # serializers.py
 
 from rest_framework import serializers
-from .models import History
-from fileuploads.models import Context, Workspace
+from .models import Geospatial
 
-class WorkspaceMiniSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Workspace
-        fields = ['id', 'title']
-
-class ContextMiniSerializer(serializers.ModelSerializer):
-    workspace = WorkspaceMiniSerializer()
+class GeoSpatializationListSerializer(serializers.ModelSerializer):
+    download_url = serializers.SerializerMethodField()
 
     class Meta:
-        model = Context
-        fields = ['id', 'title', 'workspace']
+        model = Geospatial
+        fields = [
+            "id",
+            "report_name",
+            "export_format",
+            "status",
+            "geonode_url",
+            "created_date",
+            "download_url",
+        ]
 
-class HistoryMiniSerializer(serializers.ModelSerializer):
-    context = ContextMiniSerializer(many=True)
-
-    class Meta:
-        model = History
-        fields = ['id', 'credate_date','title', 'context']
+    def get_download_url(self, obj):
+        if not obj.geonode_url:
+            return None
+        if obj.geonode_url.startswith("http"):
+            return obj.geonode_url
+        request = self.context.get("request")
+        if request is None:
+            return obj.geonode_url
+        return request.build_absolute_uri(obj.geonode_url)

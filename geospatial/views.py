@@ -7,10 +7,11 @@ from django.views.decorators.csrf import csrf_exempt
 from django.http import StreamingHttpResponse
 from django.core.serializers.json import DjangoJSONEncoder
 from fileuploads.models import Workspace, Context, Files, DocumentEmbedding
-from reports.models import Report
+from .models import Geospatial
 from shared.authentication import KeycloakAuthentication
 from fileuploads.embeddings_service import embedder
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
+from .serializers import GeoSpatializationListSerializer
 from pgvector.django import L2Distance
 from django.db import transaction
 import time
@@ -44,6 +45,49 @@ ollama_server = os.environ.get('ollama_server', 'http://host.docker.internal:114
 
 
 
+
+@api_view(["GET"])
+@authentication_classes([KeycloakAuthentication])
+def list_geospatial(request):
+    user_id = None
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    qs = Geospatial.objects.all()
+
+    if user_id:
+        qs = qs.filter(user_id=user_id)
+
+    params = request.query_params
+    if params.get("context_id"):
+        qs = qs.filter(context_id=params["context_id"])
+
+    qs = qs.order_by("-created_date")
+    ser = GeoSpatializationListSerializer(qs, many=True, context={"request": request})
+    return Response(ser.data)
+
+@api_view(["GET"])
+@authentication_classes([KeycloakAuthentication])
+def get_geospatial(request, pk: int):
+    user_id = None
+    user_id = None
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    try:
+        gs = Geospatial.objects.get(pk=pk)
+    except Geospatial.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    print(f"DEBUG get_spatialization: user_id={user_id}, sp.user_id={gs.user_id}", flush=True)
+
+    if user_id and gs.user_id and gs.user_id.lower() != user_id.lower():
+        print("DEBUG get_spatialization: FORBIDDEN!", flush=True)
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    ser = GeoSpatializationListSerializer(gs, context={"request": request})
+    return Response(ser.data)
 
 # =================== GEOSPATIAL APIs ===================
 
@@ -479,9 +523,6 @@ def geospatial_execute(request):
         logger.info("Ejecutando plan geoespacial...")
         result_gdf = execute_geospatial_plan(plan, initial_gdfs)
         
-        if result_gdf.empty:
-            return JsonResponse({"error": "El resultado del plan está vacío"}, status=500)
-        
         # Obtención de metadata
         feature_count = len(result_gdf)
         geometry_type = get_geometry_type(result_gdf)
@@ -619,11 +660,11 @@ def geospatial_execute_async(request):
             user_id = request.user.payload.get("email")
 
         # Crear el objeto Report
-        report = Report.objects.create(
+        geospatial = Geospatial.objects.create(
             context=context,
             report_name=report_name,
-            report_type="geospatial", # Tipo fijo para este flujo
-            file_format=output_format, # Usamos export_format aquí
+            report_type=operation, # Tipo fijo para este flujo
+            export_format=output_format,
             instructions=prompt,
             user_id=user_id,
             status="pending",
@@ -632,22 +673,22 @@ def geospatial_execute_async(request):
         # Asociar archivos si se proporcionaron
         if selected_layers and isinstance(selected_layers, list):
             files = Files.objects.filter(id__in=selected_layers)
-            report.files_used.set(files)
+            geospatial.files_used.set(files)
 
         # Disparar tarea Celery
         from geospatial.tasks import generate_operational
         base_url = request.build_absolute_uri("/").rstrip("/")
         authorization = request.headers.get("Authorization", "")
-        task = generate_operational.delay(report.id, base_url, authorization, refresh_token, operation=operation)
+        task = generate_operational.delay(geospatial.id, base_url, authorization, refresh_token, operation=operation)
 
-        report.task_id = task.id
-        report.save(update_fields=["task_id", "updated_date"])
+        geospatial.task_id = task.id
+        geospatial.save(update_fields=["task_id", "updated_date"])
 
         return Response(
             {
-                "report_id": report.id,
+                "report_id": geospatial.id,
                 "task_id": task.id,
-                "status": report.status,
+                "status": geospatial.status,
             },
             status=status.HTTP_202_ACCEPTED,
         )

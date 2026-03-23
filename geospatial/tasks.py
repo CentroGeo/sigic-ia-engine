@@ -12,7 +12,7 @@ import geopandas as gpd
 from datetime import datetime
 from django.utils.text import slugify
 
-from reports.models import Report
+from geospatial.models import Geospatial
 from fileuploads.models import Context, Files, DocumentEmbedding
 from geospatial.geospatial_utils import (
     load_geojson_to_gdf,
@@ -37,7 +37,7 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
     """
     try:
         logger.info(f"Iniciando generate_operational para report_id={report_id}")
-        report = Report.objects.select_related("context").get(pk=report_id)
+        report = Geospatial.objects.select_related("context").get(pk=report_id)
         report.status = "processing"
         report.task_id = self.request.id
         report.save(update_fields=["status", "task_id", "updated_date"])
@@ -48,7 +48,8 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
         # Usamos un valor por defecto para el modelo si no se especifica, 
         # o podríamos pasarlo como argumento si fuera necesario.
         model = "deepseek-r1:32b" 
-        output_format = report.file_format if report.file_format in ['geojson', 'shp', 'gpkg'] else 'geojson'
+        output_format = report.export_format if report.export_format in ['geojson', 'shp', 'gpkg'] else 'geojson'
+
 
         # 1. Descubrir capas
         logger.info(f"Descubriendo capas para el contexto {context_id}")
@@ -244,7 +245,7 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
             resp.raise_for_status()
             data = resp.json()
             plan_str = data["message"]["content"].strip()
-            logger.info(f"Respuesta del LLM recibida para el reporte {report_id}")
+            logger.info(f"Respuesta del LLM recibida para el reporte {report_id}:\n{plan_str}")
             
             # 4. Parsear plan
             logger.info(f"Parseando plan JSON para el reporte {report_id}")
@@ -296,9 +297,9 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
             raise ValueError("No se pudieron cargar los datos GeoJSON")
 
         result_gdf = execute_geospatial_plan(plan, initial_gdfs)
-        if result_gdf.empty:
-            logger.error(f"El resultado del plan está vacío para el reporte {report_id}")
-            raise ValueError(f"El resultado del plan está vacío")
+        is_empty = result_gdf.empty
+        if is_empty:
+            logger.warning(f"El resultado del plan está vacío para el reporte {report_id}. Se devolverá una capa vacía.")
 
         # 7. Exportación
         logger.info(f"Exportando resultados para el reporte {report_id} en formato {output_format}")
@@ -313,6 +314,10 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
         filename = ""
         content_type = ""   
         
+        if output_format in ["shp", "gpkg"] and is_empty:
+            logger.info("El resultado está vacío; forzando formato GeoJSON para evitar errores de esquema.")
+            output_format = "geojson"
+
         if output_format == "geojson":
             filename = f"{base_filename}.geojson"
             file_path = os.path.join(geojsons_dir, filename)
@@ -344,41 +349,44 @@ def generate_operational(self, report_id: int, base_url: str, authorization: str
                 file_url = f"{settings.MEDIA_URL}geojsons/{filename}"
                 content_type = "application/zip"
         
-        try:
-            import io
-            from fileuploads.utils import upload_image_to_geonode
-            
-            with open(file_path, "rb") as f:
-                file_bytes = f.read()
+        if not is_empty:
+            try:
+                import io
+                from fileuploads.utils import upload_image_to_geonode
                 
-            file_obj = io.BytesIO(file_bytes)
-            file_obj.name = os.path.basename(file_path)
-            file_obj.content_type = content_type
-            
-            response = upload_image_to_geonode(file_obj, os.path.basename(file_path), token=authorization, refresh_token=refresh_token)
-            if response is not None:
-                print(f"[Análisis espacial-DEBUG] GeoNode Upload HTTP Status: {response.status_code}", flush=True)
-                if response.status_code < 400:
-                    try:
-                        response_data = response.json()
-                        print(f"[Análisis espacial-DEBUG] GeoNode Upload JSON: {response_data}", flush=True)
-                        relative_url = response_data.get("url", "")
-                        if relative_url:
-                            geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
-                            file_url = f"{geonode_base}{relative_url}"
-                            print(f"[Análisis espacial-DEBUG] Archivo subido a geonode correctamente: {file_url}", flush=True)
-                        else:
-                            print("[Análisis espacial-DEBUG] Respuesta exitosa pero NO contiene clave 'url'", flush=True)
-                    except Exception as json_exc:
-                        print(f"[Análisis espacial-DEBUG] Error decodificando JSON de GeoNode. Content: {response.text[:200]}...", flush=True)
+                with open(file_path, "rb") as f:
+                    file_bytes = f.read()
+                    
+                file_obj = io.BytesIO(file_bytes)
+                file_obj.name = os.path.basename(file_path)
+                file_obj.content_type = content_type
+                
+                response = upload_image_to_geonode(file_obj, os.path.basename(file_path), token=authorization, refresh_token=refresh_token)
+                if response is not None:
+                    print(f"[Análisis espacial-DEBUG] GeoNode Upload HTTP Status: {response.status_code}", flush=True)
+                    if response.status_code < 400:
+                        try:
+                            response_data = response.json()
+                            print(f"[Análisis espacial-DEBUG] GeoNode Upload JSON: {response_data}", flush=True)
+                            relative_url = response_data.get("url", "")
+                            if relative_url:
+                                geonode_base = os.environ.get("GEONODE_SERVER", "").rstrip("/")
+                                file_url = f"{geonode_base}{relative_url}"
+                                print(f"[Análisis espacial-DEBUG] Archivo subido a geonode correctamente: {file_url}", flush=True)
+                            else:
+                                print("[Análisis espacial-DEBUG] Respuesta exitosa pero NO contiene clave 'url'", flush=True)
+                        except Exception as json_exc:
+                            print(f"[Análisis espacial-DEBUG] Error decodificando JSON de GeoNode. Content: {response.text[:200]}...", flush=True)
+                    else:
+                        print(f"[Análisis espacial-DEBUG] Fallo al subir archivo a geonode HTTP {response.status_code}: {response.text[:200]}", flush=True)
                 else:
-                    print(f"[Análisis espacial-DEBUG] Fallo al subir archivo a geonode HTTP {response.status_code}: {response.text[:200]}", flush=True)
-            else:
-                print(f"[Análisis espacial-DEBUG] Fallo crítico: response was None", flush=True)
-        except Exception as geo_e:
-            import traceback
-            traceback.print_exc()
-            print(f"[Análisis espacial-DEBUG] Excepción subiendo archivo a geonode: {str(geo_e)}", flush=True)
+                    print(f"[Análisis espacial-DEBUG] Fallo crítico: response was None", flush=True)
+            except Exception as geo_e:
+                import traceback
+                traceback.print_exc()
+                print(f"[Análisis espacial-DEBUG] Excepción subiendo archivo a geonode: {str(geo_e)}", flush=True)
+        else:
+            logger.info("Omitiendo subida a GeoNode debido a que la capa está vacía.")
 
         # 8. Actualizar Reporte
         report.status = "done"
