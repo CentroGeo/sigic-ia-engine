@@ -553,6 +553,35 @@ def upload_image_to_geonode(file, filename, token="", refresh_token=""):
 
     return response
 
+def delete_image_to_geonode(filename, token="", refresh_token=""):
+    print(f"Iniciando delete_image_to_geonode para {filename}", flush=True)
+    print(f"Token={token[:15]}... refresh_token={refresh_token[:15]}...", flush=True)
+    if refresh_token:
+        from shared.authentication import refresh_keycloak_token
+        new_token = refresh_keycloak_token(refresh_token)
+        if new_token:
+            token = new_token
+            print("Token OAuth refrescado con éxito", flush=True)
+        else:
+            print("La función refresh_keycloak_token devolvió None", flush=True)
+    else:
+        print("No se proporcionó refresh_token a upload_image_to_geonode", flush=True)
+
+    data = {
+        "filename": filename
+    }
+    
+    headers = {"Authorization": token}
+
+    geonode_base_url = os.environ.get("GEONODE_SERVER")
+    upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/delete"
+
+    response = requests.post(
+        upload_url, json=data, headers=headers, timeout=180
+    )
+
+    return response
+
 
 def get_geonode_document_uuid(doc_url, authorization=None, category_info="documents"):
     """

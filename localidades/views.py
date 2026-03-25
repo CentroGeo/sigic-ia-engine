@@ -1,3 +1,5 @@
+import os
+from fileuploads.utils import delete_image_to_geonode
 from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.response import Response
 from rest_framework import status
@@ -118,11 +120,18 @@ def get_spatialization(request, pk: int):
 @authentication_classes([KeycloakAuthentication])
 def delete_spatialization(request, pk: int):
     user_id = None
+    authorization = request.headers.get("Authorization", "")
+    refresh_token = request.data.get("refresh_token", "")
+    
     if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
         user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
 
     try:
         sp = Spatialization.objects.get(pk=pk)
+        if(sp.geonode_url):
+            filename = os.path.basename(sp.geonode_url)
+            delete_image_to_geonode(filename, authorization, refresh_token)
+        
     except Spatialization.DoesNotExist:
         return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
 

@@ -1,4 +1,6 @@
+import os
 from django.conf import settings
+from fileuploads.utils import delete_image_to_geonode
 from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -151,11 +153,18 @@ def delete_report(request: Request, pk: int):
     Elimina un reporte. Solo acceso al propio user_id.
     """
     user_id = None
+    authorization = request.headers.get("Authorization", "")
+    refresh_token = request.data.get("refresh_token", "")
+    
     if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
         user_id = request.user.payload.get("email")
 
     try:
         report = Report.objects.get(pk=pk)
+        if(report.geonode_url):
+            filename = os.path.basename(report.geonode_url)
+            delete_image_to_geonode(filename, authorization, refresh_token)
+        
     except Report.DoesNotExist:
         return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
 

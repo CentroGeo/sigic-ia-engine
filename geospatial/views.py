@@ -1,3 +1,4 @@
+from fileuploads.utils import delete_image_to_geonode
 from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.response import Response
 from django.core.serializers import serialize
@@ -757,3 +758,29 @@ def discover_and_suggest_analysis(request):
     except Exception as e:
         logger.error(f"Error en discover_and_suggest_analysis: {str(e)}")
         return JsonResponse({"error": str(e)}, status=500)
+    
+
+@api_view(["DELETE"])
+@authentication_classes([KeycloakAuthentication])
+def delete_geospatial(request, pk: int):
+    user_id = None
+    authorization = request.headers.get("Authorization", "")
+    refresh_token = request.data.get("refresh_token", "")
+    
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("preferred_username") or request.user.payload.get("email")
+
+    try:
+        sp = Geospatial.objects.get(pk=pk)
+        if(sp.geonode_url):
+            filename = os.path.basename(sp.geonode_url)
+            delete_image_to_geonode(filename, authorization, refresh_token)
+            
+    except Geospatial.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    if user_id and sp.user_id and sp.user_id.lower() != user_id.lower():
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    sp.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

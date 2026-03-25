@@ -9,4 +9,5 @@ urlpatterns = [
     path('execute', views.geospatial_execute, name='geospatial-execute'),
     path('suggestions', views.discover_and_suggest_analysis, name='spatial_analysis_discover'),
     path('execute_async', views.geospatial_execute_async, name='geospatial-execute-async'),
+    path('<int:pk>/delete/', views.delete_geospatial, name='delete_geospatial'),
 ]
