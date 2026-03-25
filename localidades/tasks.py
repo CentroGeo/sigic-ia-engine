@@ -33,6 +33,7 @@ def generate_spatialization_task(self, spatialization_id: int, authorization: st
             entity_types=sp.entity_types,
             export_format=sp.export_format,
             geometry_type=sp.geometry_type,
+            custom_instructions=sp.custom_instructions or "",
             authorization=authorization,
             refresh_token=refresh_token,
             progress_callback=set_progress
@@ -45,10 +46,11 @@ def generate_spatialization_task(self, spatialization_id: int, authorization: st
             return {"error": result["error"]}
             
         sp.status = "done"
+        sp.progress = 100
         if "download_url" in result:
             sp.geonode_url = result["download_url"]
             
-        sp.save(update_fields=["status", "geonode_url", "updated_date"])
+        sp.save(update_fields=["status", "progress", "geonode_url", "updated_date"])
         
         return {"geonode_url": sp.geonode_url}
         
