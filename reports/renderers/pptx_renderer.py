@@ -12,10 +12,24 @@ LAYOUTS = {
     "sources": 1,      # Title and Content
 }
 
+# TEMPLATE_LAYOUTS = {
+#     "title": 0,        # Title Slide
+#     "bullets": 1,      # Title and Content
+#     "sources": 1,      # Title and Content
+#     "two_columns": 3,  # Two Content
+# }
 
+# def render_pptx_from_spec(
+#     spec: Dict[str, Any],
+#     *,
+#     template_path: str | None = None,
+#     debug_layouts: bool = False,
+# ) -> bytes:
 def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) -> bytes:
     prs = Presentation()  # Aquí "podemos pasar plantilla personalizada de institución"  por ahora
     # se esta usando la plantilla deefault de power point
+
+    # prs = Presentation(template_path) if template_path else Presentation()
 
     if debug_layouts:
         _debug_print_layouts(prs)
@@ -27,8 +41,9 @@ def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) 
     for slide_spec in slides:
         layout_name = slide_spec.get("layout", "bullets")
         layout_idx = LAYOUTS.get(layout_name, 1)   #1, se pasa por default, , significa  titulo y contendido
-
         slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
+        # layout_idx = TEMPLATE_LAYOUTS.get(layout_name,1)
+        # slide = prs.slides.add_slide(prs.slide_layouts[layout_idx])
 
         # Título
         if slide.shapes.title and slide_spec.get("title"):
@@ -58,7 +73,8 @@ def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) 
         elif layout_name == "sources":
             body = _get_body_placeholder(slide)
             sources = slide_spec.get("sources", [])
-            lines = [f'{s.get("name","")}: {s.get("detail","")}' for s in sources]
+            # lines = [f'{s.get("name","")}: {s.get("detail","")}' for s in sources]
+            lines = [s.get("name", "") for s in sources]
             _fill_bullets(body, lines)
 
         else:
