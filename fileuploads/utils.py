@@ -218,6 +218,25 @@ def extract_text_from_file(file):
 
     print(f"📦 Procesando {file.name} ({file_size_mb:.2f} MB)")
 
+    # -------- GEOJSON --------
+    if ext == "geojson":
+        chunks, originals, metadata = [], [], []
+
+        try:
+            for idx, entry in enumerate(iter_json_entries(file, file_size_mb)):
+                texto, meta = json_entry_to_text_and_metadata(entry)
+                if texto:
+                    chunks.append(texto)
+                    metadata.append(meta)
+                    originals.append(entry)
+
+            print(f"🧩 GEOJSON → {len(chunks)} chunks generados")
+            return chunks, originals, metadata
+
+        except Exception as e:
+            print(f"❌ Error procesando GEOJSON: {e}")
+            return None
+        
     # -------- JSON --------
     if ext == "json":
         chunks, originals, metadata = [], [], []
@@ -409,9 +428,16 @@ def vectorize_and_store_text(text, file_id):
     DocumentEmbedding.objects.create(file_id=file_id, text=text, embedding=vector)
 
 
-def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"):
+def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título", refresh_token=""):
     print(f"[DEBUG] upload_file_to_geonode - Authorization: {authorization[:50] if authorization else 'None'}...")
     print(f"[DEBUG] upload_file_to_geonode - File: {file.name}")
+
+    if refresh_token:
+        from shared.authentication import refresh_keycloak_token
+        new_token = refresh_keycloak_token(refresh_token)
+        if new_token:
+            authorization = new_token
+            print("[FILEUPLOADS] Token OAuth refrescado con éxito previo a la subida", flush=True)
 
     if not authorization:
         raise ValueError("Authorization token is required but not provided")
@@ -499,7 +525,20 @@ def upload_file_to_geonode(file, authorization, cookie=None, title="Sin título"
 
     return response
 
-def upload_image_to_geonode(file, filename, token=""):
+def upload_image_to_geonode(file, filename, token="", refresh_token=""):
+    print(f"[LOCALIDADES] Iniciando upload_image_to_geonode para {filename}", flush=True)
+    print(f"[LOCALIDADES] Token={token[:15]}... refresh_token={refresh_token[:15]}...", flush=True)
+    if refresh_token:
+        from shared.authentication import refresh_keycloak_token
+        new_token = refresh_keycloak_token(refresh_token)
+        if new_token:
+            token = new_token
+            print("[LOCALIDADES] Token OAuth refrescado con éxito", flush=True)
+        else:
+            print("[LOCALIDADES] La función refresh_keycloak_token devolvió None", flush=True)
+    else:
+        print("[LOCALIDADES] No se proporcionó refresh_token a upload_image_to_geonode", flush=True)
+
     file_bytes = file.read()
     files = {"file": (filename, file_bytes, file.content_type)}
     data = {"category": "contextos"}
@@ -509,7 +548,36 @@ def upload_image_to_geonode(file, filename, token=""):
     upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/upload"
 
     response = requests.post(
-        upload_url, files=files, data=data, headers=headers, timeout=30
+        upload_url, files=files, data=data, headers=headers, timeout=180
+    )
+
+    return response
+
+def delete_image_to_geonode(filename, token="", refresh_token=""):
+    print(f"Iniciando delete_image_to_geonode para {filename}", flush=True)
+    print(f"Token={token[:15]}... refresh_token={refresh_token[:15]}...", flush=True)
+    if refresh_token:
+        from shared.authentication import refresh_keycloak_token
+        new_token = refresh_keycloak_token(refresh_token)
+        if new_token:
+            token = new_token
+            print("Token OAuth refrescado con éxito", flush=True)
+        else:
+            print("La función refresh_keycloak_token devolvió None", flush=True)
+    else:
+        print("No se proporcionó refresh_token a upload_image_to_geonode", flush=True)
+
+    data = {
+        "filename": filename
+    }
+    
+    headers = {"Authorization": token}
+
+    geonode_base_url = os.environ.get("GEONODE_SERVER")
+    upload_url = f"{geonode_base_url}/sigic/ia/mediauploads/delete"
+
+    response = requests.post(
+        upload_url, json=data, headers=headers, timeout=180
     )
 
     return response

@@ -1,5 +1,3 @@
-# En chat/views.py - Versión corregida sin imports circulares
-
 from rest_framework.decorators import api_view
 from rest_framework.response import Response
 from django.core.serializers import serialize
@@ -301,7 +299,7 @@ def chat(request):
                 logger.debug(f"Iniciando búsqueda RAG para: {query[:100]}...")
 
                 # Detect file types
-                files_json_count = context.files.filter(document_type='application/json').count()
+                files_json_count = context.files.filter(document_type__in=['application/json','application/geo+json']).count()
                 total_files = context.files.count()
                 files_text_count = total_files - files_json_count
                 

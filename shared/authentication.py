@@ -21,6 +21,29 @@ AUDIENCE = 'sigic_geonode'
 JWKS_URL_INTERNAL = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
 KEYCLOAK_ISSUER = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}"
 
+def refresh_keycloak_token(refresh_token: str) -> str:
+    """Intenta refrescar el token de Keycloak utilizando el refresh_token del usuario."""
+    if not refresh_token:
+        return None
+        
+    import os
+    url = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/token"
+    client_secret = os.environ.get("KEYCLOAK_CLIENT_SECRET", "ZxYwEJCemFXK6xnWLKi6kwHnTR1Iq98O")
+    data = {
+        "grant_type": "refresh_token",
+        "client_id": "sigic-nuxt-dev",
+        "client_secret": client_secret,
+        "refresh_token": refresh_token
+    }
+    try:
+        response = requests.post(url, data=data, timeout=10)
+        if response.status_code == 200:
+            return f"Bearer {response.json().get('access_token')}"
+        else:
+            print(f"Error refreshing Keycloak token: {response.text}")
+    except Exception as e:
+        print(f"Exception refreshing token: {e}")
+    return None
 
 
 def jwk_to_pem(jwk_dict):
@@ -85,3 +108,6 @@ class KeycloakAuthentication(BaseAuthentication):
         
         user = TokenUser(payload)
         return (user, None)
+
+    def authenticate_header(self, request):
+        return 'Bearer realm="sigic"'
