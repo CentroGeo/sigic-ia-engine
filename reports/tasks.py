@@ -147,18 +147,27 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
         # Flujo PPTX
         # -----------------------------------------------------------------------
         if report.file_format == "pptx":
-            from reports.services.pptx_spec_generator import generate_presentation_spec
+            from reports.services.pptx_spec_generator import generate_presentation_spec_v2
             from reports.renderers.pptx_renderer import render_pptx_from_spec
-
-            spec = generate_presentation_spec(
+            pptx_top_k = 12 if len(file_ids) == 1 else 16
+            spec = generate_presentation_spec_v2(
                 report_name=report.report_name,
                 report_type=report.report_type,
                 guided_prompt=report.instructions,
                 file_ids=file_ids,
-                top_k=5,
+                top_k=pptx_top_k,
             )
             pptx_bytes = render_pptx_from_spec(spec)
+            
+            # template_path = os.path.join(
+            #     settings.BASE_DIR,
+            #     "reports",
+            #     "templates",
+            #     "plantilla_mock.pptx"
+            # )
 
+            # pptx_bytes = render_pptx_from_spec(spec, template_path=template_path)
+            
             safe_name = slugify(report.report_name)[:60] or "report"
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
             filename = f"{safe_name}_{timestamp}.pptx"
