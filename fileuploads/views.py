@@ -22,8 +22,8 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 import uuid
 from typing import List
 import time
-import textract
-import magic
+# import textract
+# import magic
 import re
 import math
 from collections import defaultdict
@@ -1065,6 +1065,11 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 
     return filtered_chunks[:min(20, len(filtered_chunks))]  # Limitar a 20 mejores resultados
 
+def _norm_text(s: str) -> str:
+    s = (s or "").strip().lower()
+    s = re.sub(r"\s+", " ", s)
+    return s
+
 # def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
 #     query_embedding = embedder.embed_query(query)
 #     if query_embedding is None:
@@ -1077,30 +1082,60 @@ def optimized_rag_search(context_id: int, query: str, top_k: int = 50) -> List[D
 #         distance=L2Distance("embedding", query_embedding)
 #     )
 
-#     # Log: cuántos chunks totales hay para esos files
 #     total = qs.count()
 #     print(f"[REPORT RAG] total chunks en BD para files={file_ids}: {total} (lang={query_language})")
 
 #     if query_language in ["es", "en", "fr"]:
-#         lang_qs = qs.filter(language=query_language)
-#         if lang_qs.exists():
-#             qs = lang_qs
-#             print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
+#     lang_qs = qs.filter(language=query_language)
+#     if lang_qs.count() >= max(5, top_k // 2):
+#         qs = lang_qs
+#         print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
 
-#     # con L2, lo correcto es ordenar ASC (menor distancia = más parecido)
-#     top_chunks = qs.order_by("distance")[:top_k]
+#     # if query_language in ["es", "en", "fr"]:
+#     #     lang_qs = qs.filter(language=query_language)
+#     #     if lang_qs.exists():
+#     #         qs = lang_qs
+#     #         print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
 
-#     # Log: top distancias
-#     dists = [float(getattr(c, "distance", 0.0)) for c in top_chunks[:5]]
+#     # traer un poco más para dedup/balance
+#     fetch_k = max(top_k * 5, top_k)
+#     # fetch_k = max(top_k * 3, top_k)
+#     ranked = list(qs.order_by("distance")[:fetch_k])
+
+#     dists = [float(getattr(c, "distance", 0.0)) for c in ranked[:5]]
 #     print(f"[REPORT RAG] top distances (5): {dists}")
 
-#     return list(top_chunks)
+#     # 1) dedup por texto
+#     seen = set()
+#     deduped = []
+#     for ch in ranked:
+#         key = _norm_text(getattr(ch, "text", "") or "")
+#         if not key:
+#             continue
+#         if key in seen:
+#             continue
+#         seen.add(key)
+#         deduped.append(ch)
 
+#     # 2) balance por file_id
+#     n_files = max(1, len(set(file_ids)))
+#     max_per_file = max(3, math.ceil(top_k / n_files))  # ej: 20 con 2 docs => 10 por doc
+#     per_file_count = defaultdict(int)
 
-def _norm_text(s: str) -> str:
-    s = (s or "").strip().lower()
-    s = re.sub(r"\s+", " ", s)
-    return s
+#     balanced = []
+#     for ch in deduped:
+#         fid = getattr(ch, "file_id", None)
+#         if fid is None:
+#             continue
+#         if per_file_count[fid] >= max_per_file:
+#             continue
+#         balanced.append(ch)
+#         per_file_count[fid] += 1
+#         if len(balanced) >= top_k:
+#             break
+
+#     print(f"[REPORT RAG] balanced chunks: {len(balanced)} (max_per_file={max_per_file})")
+#     return balanced
 
 def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
     query_embedding = embedder.embed_query(query)
@@ -1119,12 +1154,11 @@ def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20)
 
     if query_language in ["es", "en", "fr"]:
         lang_qs = qs.filter(language=query_language)
-        if lang_qs.exists():
+        if lang_qs.count() >= max(5, top_k // 2):
             qs = lang_qs
             print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
 
-    # traer un poco más para dedup/balance
-    fetch_k = max(top_k * 3, top_k)
+    fetch_k = max(top_k * 5, top_k)
     ranked = list(qs.order_by("distance")[:fetch_k])
 
     dists = [float(getattr(c, "distance", 0.0)) for c in ranked[:5]]
@@ -1142,26 +1176,147 @@ def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20)
         seen.add(key)
         deduped.append(ch)
 
-    # 2) balance por file_id
-    n_files = max(1, len(set(file_ids)))
-    max_per_file = max(3, math.ceil(top_k / n_files))  # ej: 20 con 2 docs => 10 por doc
-    per_file_count = defaultdict(int)
+    # 2) agrupar por file_id preservando orden
+    file_groups = defaultdict(list)
+    ordered_file_ids = []
 
-    balanced = []
     for ch in deduped:
         fid = getattr(ch, "file_id", None)
         if fid is None:
             continue
-        if per_file_count[fid] >= max_per_file:
+        if fid not in file_groups:
+            ordered_file_ids.append(fid)
+        file_groups[fid].append(ch)
+
+    valid_file_ids = [fid for fid in ordered_file_ids if fid is not None]
+    if not valid_file_ids:
+        return deduped[:top_k]
+
+    selected = []
+    selected_keys = set()
+
+    # 3) piso mínimo por documento: al menos 1 chunk por file_id si existe
+    for fid in valid_file_ids:
+        group = file_groups[fid]
+        if not group:
             continue
-        balanced.append(ch)
-        per_file_count[fid] += 1
-        if len(balanced) >= top_k:
+        ch = group[0]
+        key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
+        if key not in selected_keys:
+            selected.append(ch)
+            selected_keys.add(key)
+        if len(selected) >= top_k:
             break
 
-    print(f"[REPORT RAG] balanced chunks: {len(balanced)} (max_per_file={max_per_file})")
-    return balanced
+    # 4) completar el resto con round-robin
+    round_idx = 1  # ya usamos el índice 0 en la fase mínima
 
+    while len(selected) < top_k:
+        added_this_round = False
+
+        for fid in valid_file_ids:
+            group = file_groups[fid]
+            if round_idx < len(group):
+                ch = group[round_idx]
+                key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
+                if key not in selected_keys:
+                    selected.append(ch)
+                    selected_keys.add(key)
+                    added_this_round = True
+                    if len(selected) >= top_k:
+                        break
+
+        if not added_this_round:
+            break
+
+        round_idx += 1
+
+    selected_counts = defaultdict(int)
+    for ch in selected:
+        selected_counts[getattr(ch, "file_id", None)] += 1
+
+    print(f"[REPORT RAG] balanced chunks: {len(selected)}, by_file={dict(selected_counts)}")
+    return selected[:top_k]
+
+
+
+# def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
+#     query_embedding = embedder.embed_query(query)
+#     if query_embedding is None:
+#         print("[REPORT RAG] query_embedding=None")
+#         return []
+
+#     query_language = embedder.detect_language(query)
+
+#     qs = DocumentEmbedding.objects.filter(file_id__in=file_ids).annotate(
+#         distance=L2Distance("embedding", query_embedding)
+#     )
+
+#     total = qs.count()
+#     print(f"[REPORT RAG] total chunks en BD para files={file_ids}: {total} (lang={query_language})")
+
+#     if query_language in ["es", "en", "fr"]:
+#         lang_qs = qs.filter(language=query_language)
+#         if lang_qs.count() >= max(5, top_k // 2):
+#             qs = lang_qs
+#             print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
+
+#     fetch_k = max(top_k * 5, top_k)
+#     ranked = list(qs.order_by("distance")[:fetch_k])
+
+#     dists = [float(getattr(c, "distance", 0.0)) for c in ranked[:5]]
+#     print(f"[REPORT RAG] top distances (5): {dists}")
+
+#     # 1) dedup por texto
+#     seen = set()
+#     deduped = []
+#     for ch in ranked:
+#         key = _norm_text(getattr(ch, "text", "") or "")
+#         if not key:
+#             continue
+#         if key in seen:
+#             continue
+#         seen.add(key)
+#         deduped.append(ch)
+
+#     # 2) agrupar por file_id preservando orden
+#     file_groups = defaultdict(list)
+#     ordered_file_ids = []
+
+#     for ch in deduped:
+#         fid = getattr(ch, "file_id", None)
+#         if fid is None:
+#             continue
+#         if fid not in file_groups:
+#             ordered_file_ids.append(fid)
+#         file_groups[fid].append(ch)
+
+#     valid_file_ids = [fid for fid in ordered_file_ids if fid is not None]
+#     if not valid_file_ids:
+#         return deduped[:top_k]
+
+#     # 3) round-robin entre archivos
+#     balanced = []
+#     round_idx = 0
+
+#     while len(balanced) < top_k:
+#         added_this_round = False
+
+#         for fid in valid_file_ids:
+#             group = file_groups[fid]
+#             if round_idx < len(group):
+#                 balanced.append(group[round_idx])
+#                 added_this_round = True
+#                 if len(balanced) >= top_k:
+#                     break
+
+#         if not added_this_round:
+#             break
+
+#         round_idx += 1
+
+#     print(f"[REPORT RAG] balanced chunks: {len(balanced)}")
+#     return balanced[:top_k]
 
 # Función auxiliar para limpiar cache periódicamente
 def cleanup_embedding_cache():
