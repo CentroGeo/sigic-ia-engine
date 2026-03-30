@@ -26,7 +26,7 @@ import time
 # import magic
 import re
 import math
-from collections import defaultdict
+from collections import defaultdict, Counter
 
 
 
@@ -1137,109 +1137,6 @@ def _norm_text(s: str) -> str:
 #     print(f"[REPORT RAG] balanced chunks: {len(balanced)} (max_per_file={max_per_file})")
 #     return balanced
 
-def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
-    query_embedding = embedder.embed_query(query)
-    if query_embedding is None:
-        print("[REPORT RAG] query_embedding=None")
-        return []
-
-    query_language = embedder.detect_language(query)
-
-    qs = DocumentEmbedding.objects.filter(file_id__in=file_ids).annotate(
-        distance=L2Distance("embedding", query_embedding)
-    )
-
-    total = qs.count()
-    print(f"[REPORT RAG] total chunks en BD para files={file_ids}: {total} (lang={query_language})")
-
-    if query_language in ["es", "en", "fr"]:
-        lang_qs = qs.filter(language=query_language)
-        if lang_qs.count() >= max(5, top_k // 2):
-            qs = lang_qs
-            print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
-
-    fetch_k = max(top_k * 5, top_k)
-    ranked = list(qs.order_by("distance")[:fetch_k])
-
-    dists = [float(getattr(c, "distance", 0.0)) for c in ranked[:5]]
-    print(f"[REPORT RAG] top distances (5): {dists}")
-
-    # 1) dedup por texto
-    seen = set()
-    deduped = []
-    for ch in ranked:
-        key = _norm_text(getattr(ch, "text", "") or "")
-        if not key:
-            continue
-        if key in seen:
-            continue
-        seen.add(key)
-        deduped.append(ch)
-
-    # 2) agrupar por file_id preservando orden
-    file_groups = defaultdict(list)
-    ordered_file_ids = []
-
-    for ch in deduped:
-        fid = getattr(ch, "file_id", None)
-        if fid is None:
-            continue
-        if fid not in file_groups:
-            ordered_file_ids.append(fid)
-        file_groups[fid].append(ch)
-
-    valid_file_ids = [fid for fid in ordered_file_ids if fid is not None]
-    if not valid_file_ids:
-        return deduped[:top_k]
-
-    selected = []
-    selected_keys = set()
-
-    # 3) piso mínimo por documento: al menos 1 chunk por file_id si existe
-    for fid in valid_file_ids:
-        group = file_groups[fid]
-        if not group:
-            continue
-        ch = group[0]
-        key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
-        if key not in selected_keys:
-            selected.append(ch)
-            selected_keys.add(key)
-        if len(selected) >= top_k:
-            break
-
-    # 4) completar el resto con round-robin
-    round_idx = 1  # ya usamos el índice 0 en la fase mínima
-
-    while len(selected) < top_k:
-        added_this_round = False
-
-        for fid in valid_file_ids:
-            group = file_groups[fid]
-            if round_idx < len(group):
-                ch = group[round_idx]
-                key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
-                if key not in selected_keys:
-                    selected.append(ch)
-                    selected_keys.add(key)
-                    added_this_round = True
-                    if len(selected) >= top_k:
-                        break
-
-        if not added_this_round:
-            break
-
-        round_idx += 1
-
-    selected_counts = defaultdict(int)
-    for ch in selected:
-        selected_counts[getattr(ch, "file_id", None)] += 1
-
-    print(f"[REPORT RAG] balanced chunks: {len(selected)}, by_file={dict(selected_counts)}")
-    return selected[:top_k]
-
-
-
 # def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20) -> List[DocumentEmbedding]:
 #     query_embedding = embedder.embed_query(query)
 #     if query_embedding is None:
@@ -1295,28 +1192,166 @@ def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20)
 #     if not valid_file_ids:
 #         return deduped[:top_k]
 
-#     # 3) round-robin entre archivos
-#     balanced = []
-#     round_idx = 0
+#     selected = []
+#     selected_keys = set()
 
-#     while len(balanced) < top_k:
+#     # 3) piso mínimo por documento: al menos 1 chunk por file_id si existe
+#     for fid in valid_file_ids:
+#         group = file_groups[fid]
+#         if not group:
+#             continue
+#         ch = group[0]
+#         key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
+#         if key not in selected_keys:
+#             selected.append(ch)
+#             selected_keys.add(key)
+#         if len(selected) >= top_k:
+#             break
+
+#     # 4) completar el resto con round-robin
+#     round_idx = 1  # ya usamos el índice 0 en la fase mínima
+
+#     while len(selected) < top_k:
 #         added_this_round = False
 
 #         for fid in valid_file_ids:
 #             group = file_groups[fid]
 #             if round_idx < len(group):
-#                 balanced.append(group[round_idx])
-#                 added_this_round = True
-#                 if len(balanced) >= top_k:
-#                     break
+#                 ch = group[round_idx]
+#                 key = (getattr(ch, "file_id", None), getattr(ch, "chunk_index", None))
+#                 if key not in selected_keys:
+#                     selected.append(ch)
+#                     selected_keys.add(key)
+#                     added_this_round = True
+#                     if len(selected) >= top_k:
+#                         break
 
 #         if not added_this_round:
 #             break
 
 #         round_idx += 1
 
-#     print(f"[REPORT RAG] balanced chunks: {len(balanced)}")
-#     return balanced[:top_k]
+#     selected_counts = defaultdict(int)
+#     for ch in selected:
+#         selected_counts[getattr(ch, "file_id", None)] += 1
+
+#     print(f"[REPORT RAG] balanced chunks: {len(selected)}, by_file={dict(selected_counts)}")
+#     return selected[:top_k]
+
+def optimized_rag_search_files(file_ids: List[int], query: str, top_k: int = 20):
+    query_embedding = embedder.embed_query(query)
+    if query_embedding is None:
+        print("[REPORT RAG] query_embedding=None")
+        return []
+
+    query_language = embedder.detect_language(query)
+
+    qs = DocumentEmbedding.objects.filter(file_id__in=file_ids).annotate(
+        distance=L2Distance("embedding", query_embedding)
+    )
+
+    total = qs.count()
+    print(f"[REPORT RAG] total chunks en BD para files={file_ids}: {total} (lang={query_language})")
+
+    if query_language in ["es", "en", "fr"]:
+        lang_qs = qs.filter(language=query_language)
+        if lang_qs.count() >= max(5, top_k // 2):
+            qs = lang_qs
+            print(f"[REPORT RAG] usando filtro por idioma={query_language}. chunks={qs.count()}")
+
+    fetch_k = max(top_k * 6, 40)
+    ranked = list(qs.order_by("distance")[:fetch_k])
+
+    dists = [float(getattr(c, "distance", 0.0)) for c in ranked[:5]]
+    print(f"[REPORT RAG] top distances (5): {dists}")
+
+    seen = set()
+    deduped = []
+    for ch in ranked:
+        key = _norm_text(getattr(ch, "text", "") or "")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(ch)
+
+    for ch in deduped:
+        dist = float(getattr(ch, "distance", 9999.0))
+        ch._score = 1.0 / (1.0 + dist)
+
+    selected = []
+    selected_keys = set()
+    selected_by_file = defaultdict(int)
+
+    unique_files = {getattr(ch, "file_id", None) for ch in deduped if getattr(ch, "file_id", None) is not None}
+    n_files = max(1, len(unique_files))
+    max_per_file = top_k if n_files == 1 else max(2, math.ceil(top_k * 0.6))
+
+    # pasada 1: techo suave activo
+    while len(selected) < top_k:
+        best = None
+        best_score = float("-inf")
+
+        for ch in deduped:
+            fid = getattr(ch, "file_id", None)
+            key = (fid, getattr(ch, "chunk_index", None))
+
+            if key in selected_keys:
+                continue
+
+            if selected_by_file[fid] >= max_per_file:
+                continue
+
+            base_score = getattr(ch, "_score", 0.0)
+            doc_penalty = 0.15 * selected_by_file[fid]
+            score = base_score - doc_penalty
+
+            if score > best_score:
+                best_score = score
+                best = ch
+
+        if best is None:
+            break
+
+        fid = getattr(best, "file_id", None)
+        key = (fid, getattr(best, "chunk_index", None))
+        selected.append(best)
+        selected_keys.add(key)
+        selected_by_file[fid] += 1
+
+    # pasada 2: fallback sin techo, solo por si faltan slots
+    while len(selected) < top_k:
+        best = None
+        best_score = float("-inf")
+
+        for ch in deduped:
+            fid = getattr(ch, "file_id", None)
+            key = (fid, getattr(ch, "chunk_index", None))
+
+            if key in selected_keys:
+                continue
+
+            base_score = getattr(ch, "_score", 0.0)
+            doc_penalty = 0.15 * selected_by_file[fid]
+            score = base_score - doc_penalty
+
+            if score > best_score:
+                best_score = score
+                best = ch
+
+        if best is None:
+            break
+
+        fid = getattr(best, "file_id", None)
+        key = (fid, getattr(best, "chunk_index", None))
+        selected.append(best)
+        selected_keys.add(key)
+        selected_by_file[fid] += 1
+
+    mix = Counter(getattr(ch, "file_id", None) for ch in selected)
+    print(f"[REPORT RAG] mmr-like chunks: {len(selected)}, by_file={dict(mix)}")
+
+    return selected[:top_k]
+
 
 # Función auxiliar para limpiar cache periódicamente
 def cleanup_embedding_cache():
