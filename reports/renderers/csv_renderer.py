@@ -51,8 +51,21 @@ def render_csv(content: str) -> bytes:
                 csv_lines[0] = first[1:]
                 csv_lines[-1] = last[:-1]
 
+    # 5. Quitar inline markdown (**bold**, *italic*, `code`) de cada celda
+    csv_lines = [_strip_inline_md_csv(line) for line in csv_lines]
+
     csv_text = "\n".join(csv_lines) + "\n"
     return csv_text.encode("utf-8")
+
+
+def _strip_inline_md_csv(line: str) -> str:
+    """Elimina marcadores de formato Markdown dentro de una línea CSV."""
+    line = re.sub(r"\*\*(.+?)\*\*", r"\1", line)
+    line = re.sub(r"\*(.+?)\*", r"\1", line)
+    line = re.sub(r"__(.+?)__", r"\1", line)
+    line = re.sub(r"_(.+?)_", r"\1", line)
+    line = re.sub(r"`(.+?)`", r"\1", line)
+    return line
 
 
 def _unpack_rows_if_needed(lines: list) -> list:

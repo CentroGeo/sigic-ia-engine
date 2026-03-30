@@ -1,4 +1,6 @@
+import os
 from django.conf import settings
+from fileuploads.utils import delete_image_to_geonode
 from rest_framework.decorators import api_view, authentication_classes
 from rest_framework.request import Request
 from rest_framework.response import Response
@@ -61,7 +63,8 @@ def generate_report(request: Request):
     from reports.tasks import generate_report_task
     base_url = request.build_absolute_uri("/").rstrip("/")
     authorization = request.headers.get("Authorization", "")
-    task = generate_report_task.delay(report.id, base_url, authorization)
+    refresh_token = data.get("refresh_token", "")
+    task = generate_report_task.delay(report.id, base_url, authorization, refresh_token=refresh_token)
 
     report.task_id = task.id
     report.save(update_fields=["task_id", "updated_date"])
@@ -139,3 +142,34 @@ def get_report(request: Request, pk: int):
 
     ser = ReportSerializer(report, context={"request": request})
     return Response(ser.data)
+
+
+@api_view(["DELETE"])
+@authentication_classes([KeycloakAuthentication])
+def delete_report(request: Request, pk: int):
+    """
+    DELETE /api/reports/{id}/delete/
+
+    Elimina un reporte. Solo acceso al propio user_id.
+    """
+    user_id = None
+    authorization = request.headers.get("Authorization", "")
+    refresh_token = request.data.get("refresh_token", "")
+    
+    if hasattr(request, "user") and request.user and hasattr(request.user, "payload"):
+        user_id = request.user.payload.get("email")
+
+    try:
+        report = Report.objects.get(pk=pk)
+        if(report.geonode_url):
+            filename = os.path.basename(report.geonode_url)
+            delete_image_to_geonode(filename, authorization, refresh_token)
+        
+    except Report.DoesNotExist:
+        return Response({"detail": "No encontrado."}, status=status.HTTP_404_NOT_FOUND)
+
+    if user_id and report.user_id and report.user_id != user_id:
+        return Response({"detail": "No autorizado."}, status=status.HTTP_403_FORBIDDEN)
+
+    report.delete()
+    return Response(status=status.HTTP_204_NO_CONTENT)

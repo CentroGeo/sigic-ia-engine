@@ -1,8 +1,16 @@
 import io
+import os
 import re
 
 from docx import Document
 from docx.shared import Pt
+
+
+def _get_report_font_name() -> str:
+    """Extrae el nombre de fuente primario de REPORT_FONT (sin comillas ni fallbacks CSS)."""
+    raw = os.environ.get("REPORT_FONT", '"Montserrat", sans-serif')
+    primary = raw.split(",")[0].strip().strip('"').strip("'")
+    return primary
 
 
 def render_docx(content: str, output_format: str, use_letterhead: bool = False) -> bytes:
@@ -31,9 +39,11 @@ def render_docx(content: str, output_format: str, use_letterhead: bool = False) 
     else:
         doc = Document()
 
+    font_name = _get_report_font_name()
+
     # Siempre parsear como markdown: el LLM suele generar markdown incluso
     # cuando se solicita plain_text. El parser lo maneja en ambos casos.
-    _parse_markdown_to_docx(doc, content)
+    _parse_markdown_to_docx(doc, content, font_name)
 
     buf = io.BytesIO()
     doc.save(buf)
@@ -44,7 +54,21 @@ def render_docx(content: str, output_format: str, use_letterhead: bool = False) 
 # Helpers internos
 # ---------------------------------------------------------------------------
 
-def _parse_markdown_to_docx(doc: Document, content: str) -> None:
+def _apply_font(paragraph, font_name: str) -> None:
+    """Aplica font_name a todos los runs de un párrafo."""
+    if not font_name:
+        return
+    for run in paragraph.runs:
+        run.font.name = font_name
+
+
+def _add_paragraph_with_font(doc: Document, text: str, font_name: str):
+    p = doc.add_paragraph(text)
+    _apply_font(p, font_name)
+    return p
+
+
+def _parse_markdown_to_docx(doc: Document, content: str, font_name: str = "") -> None:
     """Convierte Markdown básico a párrafos/headings de docx."""
     lines = content.splitlines()
     in_table = False
@@ -53,24 +77,36 @@ def _parse_markdown_to_docx(doc: Document, content: str) -> None:
     for line in lines:
         # Heading 1
         if line.startswith("# "):
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            doc.add_heading(line[2:].strip(), level=1)
+            p = doc.add_heading(line[2:].strip(), level=1)
+            _apply_font(p, font_name)
 
         # Heading 2
         elif line.startswith("## "):
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            doc.add_heading(line[3:].strip(), level=2)
+            p = doc.add_heading(line[3:].strip(), level=2)
+            _apply_font(p, font_name)
 
         # Heading 3
         elif line.startswith("### "):
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            doc.add_heading(line[4:].strip(), level=3)
+            p = doc.add_heading(line[4:].strip(), level=3)
+            _apply_font(p, font_name)
+
+        # Heading 4+ → nivel 3 (docx no tiene h4 por defecto)
+        elif re.match(r"^#{4,} ", line):
+            _flush_table(doc, table_rows, font_name)
+            table_rows = []
+            in_table = False
+            text = re.sub(r"^#+\s+", "", line).strip()
+            p = doc.add_heading(text, level=3)
+            _apply_font(p, font_name)
 
         # Table row
         elif line.startswith("|"):
@@ -83,41 +119,39 @@ def _parse_markdown_to_docx(doc: Document, content: str) -> None:
 
         # Bullet list
         elif line.startswith("- ") or line.startswith("* "):
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            # Fallback a un bullet manual en vez de requerir el estilo "List Bullet"
-            doc.add_paragraph(f"• {line[2:].strip()}")
+            clean = _strip_inline_md(line[2:].strip())
+            _add_paragraph_with_font(doc, f"• {clean}", font_name)
 
         # Numbered list
         elif re.match(r"^\d+\. ", line):
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
-            # Fallback a un bullet manual en vez de requerir el estilo "List Number" 
-            # (que falla si la plantilla base no lo incluye)
-            text = line.strip()
-            doc.add_paragraph(text)
+            clean = _strip_inline_md(line.strip())
+            _add_paragraph_with_font(doc, clean, font_name)
 
         # Empty line — flush pending table if any
         elif line.strip() == "":
             if in_table:
-                _flush_table(doc, table_rows)
+                _flush_table(doc, table_rows, font_name)
                 table_rows = []
                 in_table = False
             # else just skip blank lines
 
         # Regular paragraph — strip inline markdown bold/italic
         else:
-            _flush_table(doc, table_rows)
+            _flush_table(doc, table_rows, font_name)
             table_rows = []
             in_table = False
             clean = _strip_inline_md(line)
             if clean:
-                doc.add_paragraph(clean)
+                _add_paragraph_with_font(doc, clean, font_name)
 
     # Flush any remaining table
-    _flush_table(doc, table_rows)
+    _flush_table(doc, table_rows, font_name)
 
 
 def _parse_plain_text_to_docx(doc: Document, content: str) -> None:
@@ -138,7 +172,7 @@ def _parse_plain_text_to_docx(doc: Document, content: str) -> None:
             doc.add_paragraph(block)
 
 
-def _flush_table(doc: Document, rows: list[list[str]]) -> None:
+def _flush_table(doc: Document, rows: list[list[str]], font_name: str = "") -> None:
     if not rows:
         return
     max_cols = max(len(r) for r in rows)
@@ -149,9 +183,11 @@ def _flush_table(doc: Document, rows: list[list[str]]) -> None:
         for j, cell_text in enumerate(row_data):
             if j < max_cols:
                 row.cells[j].text = cell_text
-                if i == 0:
-                    for run in row.cells[j].paragraphs[0].runs:
+                for run in row.cells[j].paragraphs[0].runs:
+                    if i == 0:
                         run.bold = True
+                    if font_name:
+                        run.font.name = font_name
 
 
 def _strip_code_fences(content: str) -> str:

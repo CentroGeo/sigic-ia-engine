@@ -41,6 +41,7 @@ INSTALLED_APPS = [
     'django.contrib.postgres',
     'fileuploads',
     'chat',
+    'geospatial',
     'reports',
     'localidades',
     'rest_framework',
