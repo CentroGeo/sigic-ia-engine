@@ -13,9 +13,23 @@ LAYOUTS = {
 }
 
 
-def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) -> bytes:
-    prs = Presentation()  # Aquí "podemos pasar plantilla personalizada de institución"  por ahora
-    # se esta usando la plantilla deefault de power point
+def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False, use_letterhead: bool = False) -> bytes:
+    prs = None
+    if use_letterhead: # si se va a usar plantilla
+        import os
+        from django.conf import settings
+        template_path = os.path.join(settings.BASE_DIR, "reports", "templates", "plantilla_secihti.pptx")
+        if os.path.exists(template_path):
+            prs = Presentation(template_path)
+            # Remove all existing sample slides from the template
+            xml_slides = prs.slides._sldIdLst  
+            for s in list(xml_slides):
+                xml_slides.remove(s)
+        else:
+            print(f"[REPORT] ADVERTENCIA: Plantilla {template_path} no encontrada.")
+            prs = Presentation()
+    else:
+        prs = Presentation()
 
     if debug_layouts:
         _debug_print_layouts(prs)
@@ -112,7 +126,14 @@ def _fill_bullets(body_placeholder, bullets: List[str]) -> None:
         raise ValueError("'bullets' debe ser una lista de strings")
 
     tf = body_placeholder.text_frame
-    tf.clear()
+    
+    # Safe clear to retain master placeholder formatting
+    while len(tf.paragraphs) > 1:
+        p = tf.paragraphs[-1]
+        p._element.getparent().remove(p._element)
+        
+    if len(tf.paragraphs) > 0:
+        tf.paragraphs[0].text = ""
 
     for i, text in enumerate(bullets):
         p = tf.paragraphs[0] if i == 0 else tf.add_paragraph()
@@ -129,19 +150,28 @@ def _find_placeholder_by_idx(placeholders, idx: int):
 
 def _fill_column(placeholder, data: Dict[str, Any]) -> None:
     tf = placeholder.text_frame
-    tf.clear()
+    
+    while len(tf.paragraphs) > 1:
+        p = tf.paragraphs[-1]
+        p._element.getparent().remove(p._element)
+        
+    if len(tf.paragraphs) > 0:
+        tf.paragraphs[0].text = ""
 
     heading = data.get("heading")
     bullets = data.get("bullets", [])
 
     if heading:
-        tf.text = str(heading)
+        if len(tf.paragraphs) == 0:
+            tf.add_paragraph()
+        tf.paragraphs[0].text = str(heading)
 
     if bullets and not isinstance(bullets, list):
         raise ValueError("column['bullets'] debe ser una lista")
 
-    for b in bullets:
-        p = tf.add_paragraph()
+    start_idx = 1 if heading else 0
+    for i, b in enumerate(bullets):
+        p = tf.paragraphs[0] if (i == 0 and not heading) else tf.add_paragraph()
         p.text = str(b)
         p.level = 1
 

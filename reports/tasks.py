@@ -165,7 +165,7 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
                 file_ids=file_ids,
                 top_k=5,
             )
-            pptx_bytes = render_pptx_from_spec(spec)
+            pptx_bytes = render_pptx_from_spec(spec, use_letterhead=report.use_letterhead)
 
             safe_name = slugify(report.report_name)[:60] or "report"
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
