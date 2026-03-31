@@ -13,7 +13,7 @@ LAYOUTS = {
 }
 
 
-def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False, use_letterhead: bool = False) -> bytes:
+def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False, use_letterhead: bool = True) -> bytes:
     prs = None
     if use_letterhead: # si se va a usar plantilla
         import os
