@@ -759,92 +759,114 @@ def _rebalance_chunks_by_file(chunks: List[Any], top_k: int) -> List[Any]:
 
     return selected[:top_k]
 
-def _fit_topics_to_slide_count(
-    topics: List[str], content_slide_count: int
-) -> List[str]:
-    topics = [str(t).strip() for t in (topics or []) if str(t).strip()]
+# def _fit_topics_to_slide_count(
+#     topics: List[str], content_slide_count: int
+# ) -> List[str]:
+#     topics = [str(t).strip() for t in (topics or []) if str(t).strip()]
 
-    if content_slide_count <= 0:
+#     if content_slide_count <= 0:
+#         return []
+
+#     if not topics:
+#         return ["Contenido principal"] * content_slide_count
+
+#     if len(topics) >= content_slide_count:
+#         return topics[:content_slide_count]
+
+#     def expand_topic(topic: str) -> List[str]:
+#         """
+#         Genera variantes genéricas de un topic sin depender del dominio.
+#         """
+#         return [
+#             f"{topic}: conceptos principales",
+#             f"{topic}: elementos clave",
+#             f"{topic}: implicaciones",
+#             f"{topic}: aplicaciones",
+#             f"{topic}: análisis",
+#         ]
+
+#     fitted = topics[:]
+#     idx = 0
+#     base_topics = topics[:]
+
+#     while len(fitted) < content_slide_count:
+#         base = base_topics[idx % len(base_topics)]
+#         candidates = expand_topic(base)
+
+#         added = False
+#         for c in candidates:
+#             if c not in fitted:
+#                 fitted.append(c)
+#                 added = True
+#                 break
+
+#         if not added:
+#             fitted.append(f"{base}: desarrollo")
+
+#         idx += 1
+
+#     return fitted[:content_slide_count][:content_slide_count]
+
+def _fit_topics_to_slide_count(
+    topics: List[str],
+    content_slide_count: int,
+) -> List[str]:
+    if not topics:
         return []
 
-    if not topics:
-        return ["Contenido principal"] * content_slide_count
+    print(f"[PPTX] original topics: {topics}")
 
-    if len(topics) >= content_slide_count:
-        return topics[:content_slide_count]
+    clean = []
+    seen = set()
 
-    def expand_topic(topic: str) -> List[str]:
-        """
-        Genera variantes genéricas de un topic sin depender del dominio.
-        """
-        return [
-            f"{topic}: conceptos principales",
-            f"{topic}: elementos clave",
-            f"{topic}: implicaciones",
-            f"{topic}: aplicaciones",
-            f"{topic}: análisis",
-        ]
+    # 1) deduplicación semántica
+    for t in topics:
+        topic = str(t).strip()
+        if not topic:
+            continue
 
-    fitted = topics[:]
-    idx = 0
-    base_topics = topics[:]
+        base = topic.split(":")[0].strip().lower()
 
-    while len(fitted) < content_slide_count:
-        base = base_topics[idx % len(base_topics)]
-        candidates = expand_topic(base)
+        if base in seen:
+            print(f"[PPTX] dropping duplicate topic: {topic}")
+            continue
 
-        added = False
-        for c in candidates:
-            if c not in fitted:
-                fitted.append(c)
-                added = True
-                break
+        seen.add(base)
+        clean.append(topic)
 
-        if not added:
-            fitted.append(f"{base}: desarrollo")
+    # 2) si sobran → recortar
+    if len(clean) >= content_slide_count:
+        fitted = clean[:content_slide_count]
+        print(f"[PPTX] fitted topics: {fitted}")
+        return fitted
 
-        idx += 1
+    # 3) si faltan → expansión controlada
+    expanded = list(clean)
 
-    return fitted[:content_slide_count][:content_slide_count]
+    suffixes = [
+        "impactos principales",
+        "casos y cifras",
+        "retos y oportunidades",
+        "implicaciones clave",
+    ]
 
-# def _select_best_evidence_for_topic(
-#     topic: str,
-#     evidence: List[Dict[str, Any]],
-#     max_items: int = 2,
-# ) -> List[Dict[str, Any]]:
-#     topic_l = (topic or "").lower()
-#     topic_words = set(topic_l.split())
+    i = 0
 
-#     scored = []
+    while len(expanded) < content_slide_count and clean:
+        base_topic = clean[i % len(clean)]
+        suffix = suffixes[(i // len(clean)) % len(suffixes)]
 
-#     for e in evidence:
-#         text = (e.get("text") or "").lower()
-#         if not text:
-#             continue
+        candidate = f"{base_topic}: {suffix}"
 
-#         text_words = set(text.split())
+        if candidate not in expanded:
+            print(f"[PPTX] expanding topic: {candidate}")
+            expanded.append(candidate)
 
-#         overlap = len(topic_words & text_words)
+        i += 1
 
-#         # bonus por densidad temática
-#         density_bonus = overlap / max(1, len(topic_words))
+    print(f"[PPTX] fitted topics: {expanded}")
+    return expanded[:content_slide_count]
 
-#         # penalización leve por chunks demasiado largos y difusos
-#         length_penalty = min(len(text.split()) / 1000.0, 0.5)
-
-#         score = overlap + density_bonus - length_penalty
-
-#         if score > 0:
-#             scored.append((score, e))
-
-#     scored.sort(key=lambda x: x[0], reverse=True)
-
-#     selected = [e for _, e in scored[:max_items]]
-
-#     if not selected:
-#         selected = evidence[:max_items]
-
-#     return selected
 def _normalize_text(s: str) -> str:
     s = (s or "").strip().lower()
     s = unicodedata.normalize("NFKD", s)
@@ -1089,6 +1111,33 @@ Devuelve SOLO JSON válido:
 
     return clean[:3] or ["No hay evidencia suficiente para desarrollar este tema."]
 
+def _clean_topic_name(topic: str) -> str:
+    if not topic:
+        return ""
+
+    t = topic.strip()
+
+    # eliminar solo sufijos basura (los que vimos en tus resultados)
+    bad_suffixes = [
+        "conceptos principales",
+    ]
+
+    for bad in bad_suffixes:
+        if t.lower().endswith(bad):
+            t = t[: -len(bad)].strip(" :")
+
+    # bloquear topics basura completos
+    blocked = {
+        "bibliografía",
+        "bibliografia",
+        "referencias",
+    }
+
+    if t.lower() in blocked:
+        return ""
+
+    return t
+
 def generate_presentation_spec_v2(
     *,
     report_name: str,
@@ -1228,8 +1277,47 @@ def generate_presentation_spec_v2(
     )
 
     # CONTENT
+    # for topic in fitted_topics:
+    #     topic_evidence = _select_best_evidence_for_topic(topic, evidence, max_items=3)
+
+    #     bullets = _generate_bullets_for_topic(topic, topic_evidence)
+
+    #     slides.append(
+    #         {
+    #             "layout": "bullets",
+    #             "title": topic,
+    #             "bullets": bullets,
+    #         }
+    #     )
+
+    def _is_generic_topic(topic: str) -> bool:
+        generic = {
+            "introducción / conceptos básicos",
+            "introduccion / conceptos basicos",
+            "conceptos principales",
+            "bibliografía",
+            "bibliografia",
+            "referencias",
+        }
+        return (topic or "").strip().lower() in generic
+
+    # for topic in fitted_topics:
+    #     if _is_generic_topic(topic):
+    #         print(f"[PPTX] dropping generic topic: {topic}")
+    #         continue
     for topic in fitted_topics:
+        topic = _clean_topic_name(topic)
+
+        if not topic:
+            continue
+
+        if _is_generic_topic(topic):
+            continue
         topic_evidence = _select_best_evidence_for_topic(topic, evidence, max_items=3)
+
+        if len(topic_evidence) < 2:
+            print(f"[PPTX] dropping weak topic: {topic}, evidence_count={len(topic_evidence)}")
+            continue
 
         bullets = _generate_bullets_for_topic(topic, topic_evidence)
 
@@ -1240,6 +1328,8 @@ def generate_presentation_spec_v2(
                 "bullets": bullets,
             }
         )
+    
+
 
     # -------------------------
     # 5) BUILD SPEC
