@@ -11,6 +11,21 @@ else
 fi
 
 echo "🏁 Iniciando servidor Ollama..."
+
+# 👉 AGREGADO: levantar ollama en background
+ollama serve &
+PID=$!
+
+# 👉 AGREGADO: esperar a que esté listo
+echo "⏳ Esperando a que Ollama esté listo..."
+for i in $(seq 1 30); do
+  if ollama list >/dev/null 2>&1; then
+    echo "✅ Ollama listo"
+    break
+  fi
+  sleep 1
+done
+
 echo "🔍 Verificando modelo ${OLLAMA_MODEL:-deepseek-r1:latest}..."
 
 MODEL="${OLLAMA_MODEL:-deepseek-r1:latest}"
@@ -22,4 +37,8 @@ else
   echo "✅ Modelo ya disponible"
 fi
 
+# 👉 AGREGADO: detener background
+kill $PID
+
+# 👉 ORIGINAL (no se toca)
 exec ollama serve
