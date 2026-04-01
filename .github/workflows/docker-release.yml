@@ -1,58 +1,73 @@
 name: Build & Push IA Engine Images
 
 on:
-release:
-types: [published]
+  release:
+    types: [published]
 
 jobs:
-build-and-push:
-runs-on: ubuntu-latest
+  build-and-push:
+    runs-on: ubuntu-latest
 
-```
-permissions:
-  contents: read
-  packages: write
+    permissions:
+      contents: write
+      packages: write
 
-steps:
-  - name: Checkout repo
-    uses: actions/checkout@v4
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
-  - name: Get tag
-    id: tag
-    run: echo "TAG=${GITHUB_REF#refs/tags/}" >> $GITHUB_OUTPUT
+      - name: Get tag
+        id: tag
+        run: echo "TAG=${{ github.ref_name }}" >> $GITHUB_OUTPUT
 
-  - name: Login to GHCR
-    run: echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+      - name: Set image base (lowercase)
+        id: image
+        run: |
+          ROOT=$(echo "ghcr.io/${{ github.repository }}" | tr '[:upper:]' '[:lower:]')
+          echo "ENGINE_IMAGE=${ROOT}/sigic-ia-engine" >> $GITHUB_OUTPUT
+          echo "OLLAMA_IMAGE=${ROOT}/sigic-ia-ollama" >> $GITHUB_OUTPUT
 
-  # -------------------------
-  # ENGINE IMAGE
-  # -------------------------
-  - name: Build Engine image
-    run: |
-      docker build \
-        -f Dockerfile \
-        -t ghcr.io/centrogeo/sigic-ia-engine:${{ steps.tag.outputs.TAG }} \
-        -t ghcr.io/centrogeo/sigic-ia-engine:latest \
-        .
+      - name: Login to GHCR
+        run: echo "${{ secrets.GHCR_GEOINTSIGIC_PAT }}" | docker login ghcr.io -u geointsigic --password-stdin
 
-  - name: Push Engine image
-    run: |
-      docker push ghcr.io/centrogeo/sigic-ia-engine:${{ steps.tag.outputs.TAG }}
-      docker push ghcr.io/centrogeo/sigic-ia-engine:latest
+      # -------------------------
+      # ENGINE IMAGE
+      # -------------------------
+      - name: Build Engine image
+        run: |
+          docker build \
+            -f Dockerfile \
+            -t ${{ steps.image.outputs.ENGINE_IMAGE }}:${{ steps.tag.outputs.TAG }} \
+            .
 
-  # -------------------------
-  # OLLAMA IMAGE
-  # -------------------------
-  - name: Build Ollama image
-    run: |
-      docker build \
-        -f Dockerfile.ollama \
-        -t ghcr.io/centrogeo/sigic-ia-ollama:${{ steps.tag.outputs.TAG }} \
-        -t ghcr.io/centrogeo/sigic-ia-ollama:latest \
-        .
+      - name: Tag & Push Engine image
+        run: |
+          IMAGE="${{ steps.image.outputs.ENGINE_IMAGE }}"
+          VERSION="${{ steps.tag.outputs.TAG }}"
 
-  - name: Push Ollama image
-    run: |
-      docker push ghcr.io/centrogeo/sigic-ia-ollama:${{ steps.tag.outputs.TAG }}
-      docker push ghcr.io/centrogeo/sigic-ia-ollama:latest
-```
+          docker push "$IMAGE:$VERSION"
+
+          docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
+
+      # -------------------------
+      # OLLAMA IMAGE
+      # -------------------------
+      - name: Build Ollama image
+        run: |
+          docker build \
+            -f Dockerfile.ollama \
+            -t ${{ steps.image.outputs.OLLAMA_IMAGE }}:${{ steps.tag.outputs.TAG }} \
+            .
+
+      - name: Tag & Push Ollama image
+        run: |
+          IMAGE="${{ steps.image.outputs.OLLAMA_IMAGE }}"
+          VERSION="${{ steps.tag.outputs.TAG }}"
+
+          docker push "$IMAGE:$VERSION"
+
+          docker tag "$IMAGE:$VERSION" "$IMAGE:latest"
+          docker push "$IMAGE:latest"
