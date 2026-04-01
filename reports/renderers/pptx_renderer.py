@@ -5,31 +5,41 @@ from typing import Any, Dict, List, Optional
 
 from pptx import Presentation
 
-LAYOUTS = {
-    "title": 0,        # Title Slide
-    "bullets": 1,      # Title and Content
-    "two_columns": 3,  # Two Content
-    "sources": 1,      # Title and Content
-}
-
-# TEMPLATE_LAYOUTS = {
+# LAYOUTS = {
 #     "title": 0,        # Title Slide
 #     "bullets": 1,      # Title and Content
-#     "sources": 1,      # Title and Content
 #     "two_columns": 3,  # Two Content
+#     "sources": 1,      # Title and Content
 # }
 
-# def render_pptx_from_spec(
-#     spec: Dict[str, Any],
-#     *,
-#     template_path: str | None = None,
-#     debug_layouts: bool = False,
-# ) -> bytes:
-def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) -> bytes:
-    prs = Presentation()  # Aquí "podemos pasar plantilla personalizada de institución"  por ahora
+LAYOUTS = {
+    "title": 0,
+    "bullets": 2,
+    "two_columns": 2,
+    "sources": 2,
+}
+
+def _remove_all_slides(prs: Presentation) -> None:
+    slide_ids = prs.slides._sldIdLst  # uso interno de python-pptx
+    for i in range(len(prs.slides) - 1, -1, -1):
+        r_id = slide_ids[i].rId
+        prs.part.drop_rel(r_id)
+        del slide_ids[i]
+
+def render_pptx_from_spec(
+    spec: Dict[str, Any],
+    *,
+    template_path: str | None = None,
+    debug_layouts: bool = False,
+) -> bytes:
+# def render_pptx_from_spec(spec: Dict[str, Any], *, debug_layouts: bool = False) -> bytes:
+#     prs = Presentation()  # Aquí "podemos pasar plantilla personalizada de institución"  por ahora
     # se esta usando la plantilla deefault de power point
 
-    # prs = Presentation(template_path) if template_path else Presentation()
+    prs = Presentation(template_path) if template_path else Presentation()
+
+    if template_path:
+        _remove_all_slides(prs)
 
     if debug_layouts:
         _debug_print_layouts(prs)
