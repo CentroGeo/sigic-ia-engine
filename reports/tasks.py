@@ -165,16 +165,16 @@ def generate_report_task(self, report_id: int, base_url: str, authorization: str
                 file_ids=file_ids,
                 top_k=pptx_top_k,
             )
-            pptx_bytes = render_pptx_from_spec(spec)
+            # pptx_bytes = render_pptx_from_spec(spec)
             
-            # template_path = os.path.join(
-            #     settings.BASE_DIR,
-            #     "reports",
-            #     "templates",
-            #     "plantilla_mock.pptx"
-            # )
+            template_path = os.path.join(
+                settings.BASE_DIR,
+                "reports",
+                "templates",
+                "plantilla_sigic.pptx"
+            )
 
-            # pptx_bytes = render_pptx_from_spec(spec, template_path=template_path)
+            pptx_bytes = render_pptx_from_spec(spec, template_path=template_path, debug_layouts=True)
             
             safe_name = slugify(report.report_name)[:60] or "report"
             timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
