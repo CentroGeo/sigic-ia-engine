@@ -8,18 +8,17 @@ from cryptography.hazmat.primitives.asymmetric import rsa
 from cryptography.hazmat.primitives import serialization
 from jose.utils import base64url_decode
 import base64
-
+import os
 
 # KEYCLOAK_ISSUER = "http://localhost:9000/realms/django-app"
 # JWKS_URL_INTERNAL = "http://keycloak:8080/realms/django-app/protocol/openid-connect/certs"
 # AUDIENCE = "django-api"
 
-KEYCLOAK_REALM = 'sigic'
-KEYCLOAK_SERVER_URL = 'https://iam.dev.geoint.mx'
-AUDIENCE = 'sigic_geonode'
 
-JWKS_URL_INTERNAL = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}/protocol/openid-connect/certs"
-KEYCLOAK_ISSUER = f"{KEYCLOAK_SERVER_URL}/realms/{KEYCLOAK_REALM}"
+KEYCLOAK_ISSUER = os.environ.get("SOCIALACCOUNT_OIDC_ID_TOKEN_ISSUER", 'https://iam.dev.geoint.mx/realms/sigic')
+JWKS_URL_INTERNAL = f"{KEYCLOAK_ISSUER}/protocol/openid-connect/certs"
+AUDIENCE = 'account'
+
 
 def refresh_keycloak_token(refresh_token: str) -> str:
     """Intenta refrescar el token de Keycloak utilizando el refresh_token del usuario."""
