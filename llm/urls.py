@@ -25,7 +25,7 @@ urlpatterns = [
     path('api/fileuploads/', include('fileuploads.urls')),
     path('api/chat/', include('chat.urls')),
     path('api/geospatial/', include('geospatial.urls')),
-    
+    path('api/reports/', include('reports.urls')),
     path('api/localidades/', include('localidades.urls')),
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
     # Optional UI:
